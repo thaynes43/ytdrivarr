@@ -1,0 +1,4 @@
+dist
+coverage
+migrations
+pnpm-lock.yaml

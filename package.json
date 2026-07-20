@@ -1,0 +1,53 @@
+{
+  "name": "ytdrivarr",
+  "version": "0.1.0",
+  "description": "An *arr-shaped ytdl-content suite service: owns Sources, renders per-Library ytdl-sub config, schedules discovery, and remediates per item — the way an *arr does for a download client.",
+  "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/thaynes43/ytdrivarr.git"
+  },
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@11.9.0",
+  "scripts": {
+    "dev": "YTDRIVARR_API_KEYS=dev-key tsx watch src/index.ts",
+    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --target=node22 --packages=external --outfile=dist/index.js",
+    "start": "node dist/index.js",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx src/db/scripts/migrate.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.14.0",
+    "croner": "^9.0.0",
+    "drizzle-orm": "^0.36.4",
+    "hono": "^4.7.0",
+    "pg": "^8.13.1",
+    "pino": "^9.6.0",
+    "yaml": "^2.7.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.20.0",
+    "@types/node": "^22.13.0",
+    "@types/pg": "^8.11.10",
+    "drizzle-kit": "^0.30.1",
+    "embedded-postgres": "16.14.0-beta.17",
+    "esbuild": "^0.25.0",
+    "eslint": "^9.20.0",
+    "eslint-config-prettier": "^10.0.0",
+    "prettier": "^3.5.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.24.0",
+    "vitest": "^3.0.0"
+  }
+}
