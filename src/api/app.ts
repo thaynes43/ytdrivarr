@@ -4,7 +4,7 @@ import { logger } from '../logger';
 import { AuthError, NotFoundError, ValidationError } from '../errors';
 import { apiKeyAuth, apiKeyLabel } from './auth';
 import { buildOpenApiDocument, type OpenApiRoute } from './openapi';
-import { consoleStubHtml } from './console';
+import { registerConsole } from './console';
 import {
   createLibraryBody,
   createRemediationBody,
@@ -57,6 +57,8 @@ interface RouteDef extends OpenApiRoute {
 export interface CreateAppOptions {
   apiKeys: readonly string[];
   projectionRoot?: string;
+  /** Where the built operator-console assets live (tests override; prod/dev auto-resolve). */
+  consoleDir?: string;
 }
 
 const limitQuery = z.object({ limit: z.coerce.number().int().positive().optional() });
@@ -438,7 +440,9 @@ export function createApp(opts: CreateAppOptions): Hono {
   const routes = buildRoutes(opts);
 
   app.get('/livez', (c) => c.json({ status: 'ok' }));
-  app.get('/', (c) => c.html(consoleStubHtml));
+  // The operator console (D-20): `/` + `/ui/*`. The static shell carries no data — every fetch
+  // the SPA makes rides the same X-Api-Key auth as any other API caller (D-21).
+  registerConsole(app, opts.consoleDir);
   app.get('/openapi.json', (c) =>
     c.json(
       buildOpenApiDocument(routes, {

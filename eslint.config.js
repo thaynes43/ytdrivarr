@@ -9,6 +9,11 @@ export default tseslint.config(
   ...tseslint.configs.recommended,
   prettier,
   {
+    // repo scripts run under node without the TS project (build-console etc.)
+    files: ['scripts/**/*.mjs'],
+    languageOptions: { globals: { process: 'readonly', console: 'readonly' } },
+  },
+  {
     rules: {
       '@typescript-eslint/no-unused-vars': [
         'error',

@@ -5,7 +5,9 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY tsconfig.json ./
+COPY scripts ./scripts
 COPY src ./src
+# builds the operator-console assets (dist/public) and the server bundle (dist/index.js)
 RUN pnpm build
 RUN pnpm prune --prod
 
