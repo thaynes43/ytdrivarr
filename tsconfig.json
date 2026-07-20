@@ -18,5 +18,7 @@
     "outDir": "dist",
     "rootDir": "src"
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts"],
+  // The console client is DOM code; tsconfig.console.json typechecks it with the DOM lib.
+  "exclude": ["src/console"]
 }

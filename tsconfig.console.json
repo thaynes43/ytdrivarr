@@ -1,0 +1,11 @@
+{
+  // The operator-console client: browser DOM code (no node types). `pnpm typecheck` runs both
+  // projects; esbuild (scripts/build-console.mjs) does the bundling.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": []
+  },
+  "include": ["src/console/**/*.ts"],
+  "exclude": []
+}

@@ -1,0 +1,704 @@
+/*
+ * ytdrivarr operator console — dark, clean, *arr-console aesthetic. System fonts, generic
+ * branding (this service is reusable outside any particular estate). All color runs through the
+ * custom properties below.
+ *
+ * UX doctrine: interactions RECOLOR, never reflow. Hover/active/armed states change color,
+ * background, or shadow only — never size, border-width, or position. The one sanctioned layout
+ * change is a deliberate in-place expansion (the add/edit form panels, the run log toggle).
+ */
+
+:root {
+  color-scheme: dark;
+
+  --bg: #0f1317;
+  --bg-raised: #161c23;
+  --bg-inset: #12171d;
+  --bg-hover: #1d242e;
+  --border: #262f3a;
+  --border-strong: #35414f;
+
+  --text: #d6dee7;
+  --text-muted: #8d9aa9;
+  --text-faint: #647080;
+
+  --accent: #d64541; /* the brand red — wordmark, active nav, primary actions */
+  --accent-hover: #e25a56;
+  --accent-text: #ffffff;
+  --link: #6fa8dc;
+
+  --ok: #4caf6e;
+  --warn: #d9a13b;
+  --error: #e05b5b;
+  --running: #5b9bd5;
+  --unknown: #8d9aa9;
+
+  --danger: #a83a3e;
+  --danger-hover: #bb4448;
+  --danger-armed: #7e1f26; /* armed DEEPENS color; layout is untouched */
+
+  --font: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+#app {
+  height: 100%;
+}
+
+a {
+  color: var(--link);
+  text-decoration: none;
+}
+a:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+
+code {
+  font-family: var(--mono);
+  font-size: 0.92em;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 0.3em;
+}
+
+/* --- shell layout ------------------------------------------------------------------------- */
+
+.shell {
+  display: flex;
+  min-height: 100vh;
+}
+
+.sidebar {
+  width: 200px;
+  flex-shrink: 0;
+  background: var(--bg-inset);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+}
+
+.wordmark {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 1rem 1rem 0.9rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 1.05rem;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+.wordmark .mark {
+  color: var(--accent);
+  font-size: 0.8rem;
+}
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  padding: 0.6rem 0;
+  flex: 1;
+}
+.nav a {
+  display: block;
+  padding: 0.5rem 1rem;
+  color: var(--text-muted);
+  /* the active marker is PRE-RESERVED so activating never shifts the label */
+  border-left: 3px solid transparent;
+}
+.nav a:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+  text-decoration: none;
+}
+.nav a.active {
+  color: var(--text);
+  border-left-color: var(--accent);
+  background: var(--bg-raised);
+}
+
+.sidebar-foot {
+  padding: 0.8rem 1rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.8rem;
+  color: var(--text-faint);
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.content {
+  flex: 1;
+  min-width: 0;
+  padding: 1.4rem 1.8rem 3rem;
+}
+
+@media (max-width: 760px) {
+  .shell {
+    flex-direction: column;
+  }
+  .sidebar {
+    width: 100%;
+    height: auto;
+    position: static;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+  .nav {
+    flex-direction: row;
+    overflow-x: auto;
+    padding: 0;
+  }
+  .nav a {
+    border-left: none;
+    /* same reservation trick, rotated */
+    border-bottom: 3px solid transparent;
+    white-space: nowrap;
+  }
+  .nav a.active {
+    border-bottom-color: var(--accent);
+  }
+  .sidebar-foot {
+    display: none;
+  }
+  .content {
+    padding: 1rem;
+  }
+}
+
+/* --- page chrome -------------------------------------------------------------------------- */
+
+.page-header {
+  margin-bottom: 1.1rem;
+}
+.page-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+}
+.page-title-row h1 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin: 0;
+  margin-right: auto;
+}
+.api-link {
+  font-size: 0.78rem;
+  color: var(--text-faint);
+}
+
+.loading {
+  color: var(--text-muted);
+  padding: 2rem 0;
+}
+
+.error-banner {
+  background: color-mix(in srgb, var(--error) 12%, var(--bg-raised));
+  border: 1px solid var(--error);
+  border-radius: 4px;
+  color: var(--text);
+  padding: 0.6rem 0.9rem;
+  margin-bottom: 1rem;
+  font-family: var(--mono);
+  font-size: 0.85rem;
+}
+
+.empty-state {
+  border: 1px dashed var(--border-strong);
+  border-radius: 6px;
+  padding: 2rem 1.5rem;
+  text-align: center;
+  color: var(--text-muted);
+}
+.empty-state p {
+  margin: 0.2rem 0;
+}
+.empty-hint {
+  font-size: 0.82rem;
+  color: var(--text-faint);
+}
+
+.section-note {
+  color: var(--text-faint);
+  font-size: 0.82rem;
+  margin: 0.4rem 0 1rem;
+}
+
+/* --- tables ------------------------------------------------------------------------------- */
+
+.table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-raised);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.86rem;
+}
+th {
+  text-align: left;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  padding: 0.55rem 0.8rem;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+td {
+  padding: 0.5rem 0.8rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+tbody tr:last-child > td {
+  border-bottom: none;
+}
+tbody tr:hover > td {
+  background: var(--bg-hover); /* recolor only */
+}
+tbody tr.editor-row:hover > td {
+  background: transparent;
+}
+td.mono,
+.mono {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+/* long refs/paths keep their line; the .table-wrap scrolls horizontally (the *arr way) */
+td.mono {
+  white-space: nowrap;
+}
+td .cell-actions {
+  display: flex;
+  gap: 0.4rem;
+  justify-content: flex-end;
+  white-space: nowrap;
+}
+
+/* --- badges + chips ----------------------------------------------------------------------- */
+
+.badge {
+  display: inline-block;
+  padding: 0.1rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  border: 1px solid transparent;
+}
+.badge-ok {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+.badge-warn {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+.badge-error {
+  color: var(--error);
+  border-color: var(--error);
+}
+.badge-running {
+  color: var(--running);
+  border-color: var(--running);
+}
+.badge-unknown {
+  color: var(--unknown);
+  border-color: var(--unknown);
+}
+
+.chip {
+  display: inline-block;
+  padding: 0.05rem 0.5rem;
+  border-radius: 3px;
+  font-size: 0.72rem;
+  font-family: var(--mono);
+  background: var(--bg-inset);
+  border: 1px solid var(--border-strong);
+  color: var(--text-muted);
+}
+.chip-music {
+  color: #b791d9;
+  border-color: #b791d9;
+}
+.chip-video {
+  color: var(--running);
+  border-color: var(--running);
+}
+
+.cap-list {
+  display: flex;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+}
+
+/* --- buttons ------------------------------------------------------------------------------ */
+
+.btn {
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--bg-hover);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  padding: 0.32rem 0.8rem;
+  cursor: pointer;
+}
+.btn:hover {
+  background: var(--border-strong); /* recolor only */
+}
+.btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+.btn-primary:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+.btn-danger {
+  background: transparent;
+  border-color: var(--danger);
+  color: var(--error);
+}
+.btn-danger:hover {
+  background: var(--danger);
+  color: var(--accent-text);
+}
+.btn-ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-muted);
+}
+.btn-ghost:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.btn-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: 0.8rem;
+  color: var(--link);
+  cursor: pointer;
+  text-align: left;
+}
+.btn-link:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+
+/* Two-step confirm: both labels share one grid cell, so width is reserved for the widest —
+ * arming can NEVER shift the row. Armed deepens color only. */
+.confirm-btn {
+  display: inline-grid;
+}
+.confirm-btn .confirm-label {
+  grid-area: 1 / 1;
+  white-space: nowrap;
+}
+.confirm-btn .confirm-armed {
+  visibility: hidden;
+}
+.confirm-btn[data-armed='true'] {
+  background: var(--danger-armed);
+  border-color: var(--danger-armed);
+  color: var(--accent-text);
+}
+.confirm-btn[data-armed='true'] .confirm-idle {
+  visibility: hidden;
+}
+.confirm-btn[data-armed='true'] .confirm-armed {
+  visibility: visible;
+}
+
+/* Enabled/disabled toggle pill: width reserved the same way. */
+.toggle-btn {
+  display: inline-grid;
+  border-radius: 999px;
+}
+.toggle-btn .toggle-label {
+  grid-area: 1 / 1;
+  white-space: nowrap;
+}
+.toggle-btn .toggle-on {
+  color: var(--ok);
+}
+.toggle-btn .toggle-off {
+  color: var(--text-faint);
+}
+.toggle-btn[data-enabled='true'] .toggle-off {
+  visibility: hidden;
+}
+.toggle-btn[data-enabled='false'] .toggle-on {
+  visibility: hidden;
+}
+
+/* --- forms -------------------------------------------------------------------------------- */
+
+.form-panel {
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 1rem 1.1rem;
+  margin-bottom: 1rem;
+}
+.editor-row .form-panel {
+  margin: 0.35rem 0;
+}
+.form-panel h2 {
+  margin: 0 0 0.8rem;
+  font-size: 0.95rem;
+}
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.7rem 1rem;
+}
+.form-grid .full {
+  grid-column: 1 / -1;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.field label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+}
+.field input,
+.field select,
+.field textarea {
+  font: inherit;
+  font-size: 0.86rem;
+  color: var(--text);
+  background: var(--bg-inset);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  padding: 0.35rem 0.55rem;
+}
+.field textarea {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  min-height: 4.2rem;
+  resize: vertical;
+}
+.field input:focus,
+.field select:focus,
+.field textarea:focus {
+  outline: none;
+  border-color: var(--accent); /* recolor only */
+}
+.field-hint {
+  font-size: 0.72rem;
+  color: var(--text-faint);
+}
+.checkbox-field {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.45rem;
+}
+.checkbox-field label {
+  text-transform: none;
+  font-size: 0.86rem;
+  font-weight: 400;
+  color: var(--text);
+}
+
+.form-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 0.9rem;
+}
+/* the error line is PRE-RESERVED so an error appearing never reflows the buttons */
+.form-error {
+  min-height: 1.2rem;
+  font-size: 0.8rem;
+  color: var(--error);
+  font-family: var(--mono);
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+
+/* --- runs --------------------------------------------------------------------------------- */
+
+.log-excerpt {
+  font-family: var(--mono);
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.6rem 0.8rem;
+  margin: 0.35rem 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.counts {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* --- health ------------------------------------------------------------------------------- */
+
+.health-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.8rem 1rem;
+  margin-bottom: 1.2rem;
+}
+.health-banner .service-name {
+  font-weight: 650;
+}
+
+h2.section-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin: 1.4rem 0 0.6rem;
+}
+
+.alarm {
+  color: var(--warn);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+}
+
+/* --- provider cards ----------------------------------------------------------------------- */
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 0.9rem;
+}
+.card {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.9rem 1rem;
+}
+.card h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.95rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.card dl {
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.25rem 0.8rem;
+  font-size: 0.82rem;
+}
+.card dt {
+  color: var(--text-faint);
+}
+.card dd {
+  margin: 0;
+}
+
+/* --- key entry ---------------------------------------------------------------------------- */
+
+.key-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+.key-card {
+  width: 100%;
+  max-width: 24rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 1.6rem 1.5rem;
+}
+.key-card .wordmark {
+  padding: 0 0 1rem;
+  border-bottom: none;
+  font-size: 1.2rem;
+  justify-content: center;
+}
+.key-card p {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  margin: 0 0 1rem;
+}
+.key-card form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.key-card input {
+  font-family: var(--mono);
+  font-size: 0.9rem;
+  color: var(--text);
+  background: var(--bg-inset);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  padding: 0.5rem 0.7rem;
+}
+.key-card input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+/* pre-reserved error line: a rejection recolors, it does not reflow the card */
+.key-error {
+  min-height: 1.2rem;
+  font-size: 0.8rem;
+  color: var(--error);
+}
+.key-foot {
+  margin-top: 1rem;
+  font-size: 0.75rem;
+  color: var(--text-faint);
+  text-align: center;
+}

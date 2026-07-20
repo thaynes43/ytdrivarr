@@ -13,7 +13,7 @@ Peloton-hardcoding into \*arr-style **provider** extension points, so a trivial 
 scraped catalog, minted bearer, bespoke season/episode mapping) implement the **same stable contract**.
 
 - **Standalone and reusable** — valuable to anyone running ytdl-sub, with no wider ecosystem needed.
-- **Not headless** — it ships its own operator/admin console (built separately), while a member-facing
+- **Not headless** — it ships its own operator/admin console (served at `/`), while a member-facing
   layer stays a downstream concern. Members never touch this service's UI, exactly as they never touch
   Sonarr's.
 - **LAN-only, single API key** — no user management, no accounts, no OIDC. One `X-Api-Key` guards the
@@ -66,6 +66,34 @@ a startup error), a **job dispatcher** (`in_core` inline vs `out_of_process` enq
 config **emission** by preset composition (both `video` and `music` preset families), core-owned
 **dedup** + an immutable season/episode guard, and **atomic projection** (write-temp-then-rename).
 
+## The operator console
+
+The service serves its own operator/admin console at `/` — dark, thin, and honest, the way the
+\*arr consoles are. It is a hash-routed vanilla-TS SPA (no framework, no extra toolchain — the same
+esbuild that bundles the service builds it) and a **strict view over the REST API**: every byte it
+renders comes from the same endpoints any caller uses, and every page links its API counterpart.
+
+![Sources — the operator grain](docs/screenshots/console-sources.png)
+
+- **Sources** — the full list across libraries; add/edit/remove/enable at the operator grain.
+  Removal is an inline two-step arm-then-confirm (no browser dialogs); arming deepens color without
+  moving the row.
+- **Libraries** — the emit units: name, kind, player, media root, projection path, preset.
+- **Runs** — discovery/emit history (trigger, scope, status, counts, duration, log excerpt) plus a
+  manual "Run discovery" trigger.
+- **Health** — the `/health` surface: overall status and per-source provider `test()` probes, with
+  credential-age / selector-drift alarms rendered when a provider reports them.
+- **Providers** — the typed registry: id, kind, runtime, declared capabilities, media kinds.
+
+![Health — per-source test() probes](docs/screenshots/console-health.png)
+
+Auth is the same single `X-Api-Key` (no user management): the static shell is served openly (it
+carries no data), the console asks for the key once and keeps it in `localStorage` (the service is
+LAN-only by design), and any 401 drops back to key entry.
+
+Console dev loop: `pnpm build:console` rebuilds the assets; `pnpm dev:demo` boots the API over an
+embedded Postgres with a small seeded dataset on http://localhost:3222 (key `demo-key`).
+
 ## Quickstart
 
 Requirements: Node >= 22, pnpm, a PostgreSQL 16 database (tests use an embedded Postgres 16 binary — no
@@ -108,7 +136,7 @@ pnpm start
 
 Every request/response is validated with zod; the OpenAPI 3.1 document is generated from those schemas.
 
-- `GET  /` — operator console placeholder (built separately) linking `/health` + `/openapi.json`.
+- `GET  /` + `GET /ui/*` — the operator console (static shell + assets; the SPA's data calls carry `X-Api-Key`).
 - `GET  /livez` — liveness (open).
 - `GET  /openapi.json` — the generated spec (open).
 - `GET  /health` — service + per-source health (open).
@@ -127,8 +155,10 @@ provider registry, job-dispatch seam, scheduler seam, emitter + atomic projectio
 contracts, and a trivial `in_core` URL-list provider proven end to end (create a library + sources →
 discovery run → entries → rendered YAML → atomic projection). Every Source and Library carries a
 `mediaKind`/`libraryKind`, and the renderer supports both the `video` and `music` preset families
-structurally. Later milestones bring the real YouTube provider (with first-class music), the
-out-of-process authenticated-scraper (Peloton) worker, member edit surfaces, and per-item Fix.
+structurally. The M1 operator-console shell (sources / libraries / runs / health / providers) ships
+with the service. Later milestones bring the real YouTube provider (with first-class music), the
+out-of-process authenticated-scraper (Peloton) worker with per-provider console settings + `test()`
+buttons, member edit surfaces, and per-item Fix.
 
 ## License
 
