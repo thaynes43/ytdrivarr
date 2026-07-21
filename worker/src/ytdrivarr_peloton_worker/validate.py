@@ -75,11 +75,14 @@ def run_validation(
             report["error"] = f"login not ok: {lr.outcome.value}"
             return report
 
-        numberer = EpisodeNumberer({})
-        results = [
-            deps.scraper.scrape_activity(driver, a, set(), numberer, media_root)
-            for a in activities
-        ]
+        # One numberer per activity (per-(activity, duration) contract). Dry-run
+        # always seeds empty, so each activity's band starts at 1 independently.
+        numbering_snapshot: dict[str, dict] = {}
+        results = []
+        for a in activities:
+            numberer = EpisodeNumberer({})
+            results.append(deps.scraper.scrape_activity(driver, a, set(), numberer, media_root))
+            numbering_snapshot[a] = numberer.snapshot()
         entries = [e for r in results for e in r.entries]
         report["stage"] = "scraped"
 
@@ -99,7 +102,7 @@ def run_validation(
         yaml_text = render_subscriptions_yaml(entries, media_root)
         verdict = shape_diff(yaml_text)
         telemetry = build_telemetry(
-            activity_results=results, numbering_snapshot=numberer.snapshot(),
+            activity_results=results, numbering_snapshot=numbering_snapshot,
             alarms=[],
         )
         summary = build_summary(entries, results)

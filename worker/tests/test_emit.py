@@ -7,9 +7,11 @@ import yaml
 from ytdrivarr_peloton_worker.emit import (
     ScrapedClass,
     build_entry,
+    build_telemetry,
     render_subscriptions_yaml,
     shape_diff,
 )
+from ytdrivarr_peloton_worker.scraper import ActivityScrapeResult
 
 
 def _sc(class_id="c1", title="30 min Ride", instructor="Cody Rigsby",
@@ -39,6 +41,25 @@ def test_to_transport_contract_keys():
     assert set(t) == {"entryKey", "displayName", "downloadRef", "preset", "chip", "overrides"}
     assert t["entryKey"] == "c1"
     assert t["overrides"]["season_number"] == 30
+
+
+def test_build_telemetry_episode_high_water_is_per_activity():
+    # The high-water snapshot is now nested per activity: {slug: {durationStr: max}}.
+    results = [
+        ActivityScrapeResult(activity="cardio", entries=[build_entry(_sc("ca1"), "/m")],
+                             links_found=1, new_candidates=1),
+        ActivityScrapeResult(activity="cycling", entries=[build_entry(_sc("cy1"), "/m")],
+                             links_found=1, new_candidates=1),
+    ]
+    telemetry = build_telemetry(
+        activity_results=results,
+        numbering_snapshot={"cardio": {30: 224}, "cycling": {20: 41, 30: 2152}},
+        alarms=[],
+    )
+    assert telemetry["episodeHighWater"] == {
+        "cardio": {"30": 224},
+        "cycling": {"20": 41, "30": 2152},
+    }
 
 
 def test_render_yaml_live_shape_and_grouping():

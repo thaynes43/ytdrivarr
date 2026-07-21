@@ -14,6 +14,7 @@ from ytdrivarr_peloton_worker import metadata as m
         ("30 min Bootcamp: 50-50", 30),
         ("5 min Cool Down", 5),
         ("  20 min Yoga Flow", 20),
+        ("35 min Tabata Ride", 35),  # raw, NOT rounded to 30/40
         ("60min Power Zone", 60),  # no space
         ("Encore: 75 min Ride", 75),  # fallback to any int
         ("No Duration Here", 0),

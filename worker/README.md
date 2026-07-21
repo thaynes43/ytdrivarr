@@ -24,7 +24,7 @@ worker/
     login.py                # HARDENED login -> typed outcome: ok|bad_credentials|mfa_required|captcha|redirect|timeout
     bearer.py               # HARDENED bearer+cookie mint (CDP sniff) -> BearerCaptureError, Netscape cookies, JWT exp
     scraper.py              # HARDENED scrape (waits, stale-retry, cap, dedup, drift/scroll signals)
-    numbering.py            # per-duration episode counter, continues from payload high-water mark
+    numbering.py            # per-(activity,duration) episode counter; one band per activity, continues from payload high-water mark
     folders.py              # activity->folder + bootcamp collapse (donor-exact)
     metadata.py             # title/instructor/duration parse, normalize/sanitize (donor-exact)
     transport.py            # HTTP client (claim/heartbeat/report/fail) + background heartbeat thread
@@ -58,6 +58,15 @@ Each reported entry serializes to the live-file shape:
 
 `session` carries `{bearer, cookies (Netscape cookies.txt), mintedAt, expiresAt?}`.
 `mode:'refresh'` = login + bearer mint only (no scrape) for the bearer-freshness SLA (D-07).
+
+The inbound `payload.peloton.episodeNumbering` is **per-(activity, duration)**:
+`{ [activitySlug]: { [durationString]: currentMax } }` (donor parity — each activity
+carries its OWN band; JSON duration keys are strings, coerced to int at the boundary).
+When scraping activity `slug`, the worker seeds a fresh counter from
+`episodeNumbering[slug]` and hands out `max+1, max+2, …` per duration — counters are
+never shared across activities, so same-season classes advance in disjoint bands (e.g.
+Cardio E223 alongside Cycling E2151). The report's `telemetry.episodeHighWater` mirrors
+this shape: `{ [activitySlug]: { [durationString]: max } }`.
 
 ## Build
 

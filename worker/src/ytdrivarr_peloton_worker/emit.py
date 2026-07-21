@@ -112,7 +112,12 @@ def build_telemetry(
         "malformed": total_malformed,
         "loginAttempts": login_attempts,
         "bearerAttempts": bearer_attempts,
-        "episodeHighWater": {str(k): v for k, v in numbering_snapshot.items()},
+        # Per-activity high-water marks: {activitySlug: {durationString: max}} —
+        # mirrors the new per-(activity, duration) numbering contract.
+        "episodeHighWater": {
+            slug: {str(d): m for d, m in (band or {}).items()}
+            for slug, band in (numbering_snapshot or {}).items()
+        },
         "perActivity": per_activity,
         "alarms": list(alarms or []),
     }

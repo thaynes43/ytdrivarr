@@ -43,6 +43,9 @@ class PelotonPayload:
     page_load_wait_sec: float = 10.0
     login_wait_sec: float = 15.0
     existing_ids: set = field(default_factory=set)
+    # Per-activity numbering bands: {activitySlug: {duration: currentMaxEpisode}}.
+    # Each activity holds its own disjoint band (donor parity); the worker seeds a
+    # fresh EpisodeNumberer per activity from its own entry here.
     episode_numbering: dict = field(default_factory=dict)
     media_root: str = "/media/peloton"
     folder: str = ""
@@ -64,8 +67,12 @@ class PelotonPayload:
             page_load_wait_sec=float(pelo.get("pageLoadWaitSec", 10.0) or 10.0),
             login_wait_sec=float(pelo.get("loginWaitSec", 15.0) or 15.0),
             existing_ids=set(pelo.get("existingClassIds", []) or []),
-            episode_numbering={int(k): int(v)
-                               for k, v in (pelo.get("episodeNumbering", {}) or {}).items()},
+            # NEW CONTRACT: {activitySlug: {durationString: currentMax}}. JSON delivers
+            # the duration keys as strings; coerce them to int here at the boundary.
+            episode_numbering={
+                str(slug): {int(d): int(m) for d, m in (band or {}).items()}
+                for slug, band in (pelo.get("episodeNumbering", {}) or {}).items()
+            },
             media_root=pelo.get("mediaRoot", "/media/peloton") or "/media/peloton",
             folder=pelo.get("folder", "") or "",
             run_id=p.get("runId", "") or "",
@@ -213,14 +220,19 @@ class PelotonWorker:
         self.logger.info("Job %s refresh reported (bearer minted)", job.id)
 
     def _do_scrape(self, job, pelo, driver, hb, start) -> None:
-        numberer = EpisodeNumberer(pelo.episode_numbering)
         scraper = self.scraper_factory(pelo)
         results = []
+        # Donor parity: each activity gets its OWN numberer, seeded from its own
+        # per-(activity, duration) band. Counters are never shared across
+        # activities, so same-season classes advance in disjoint bands.
+        numbering_snapshot: dict[str, dict] = {}
         for activity in pelo.activities:
             self._check_reclaim(hb)
+            numberer = EpisodeNumberer(pelo.episode_numbering.get(activity, {}))
             results.append(
                 scraper.scrape_activity(driver, activity, pelo.existing_ids, numberer, pelo.media_root)
             )
+            numbering_snapshot[activity] = numberer.snapshot()
         entries = [e for r in results for e in r.entries]
 
         # Mint a fresh bearer whenever we have any class to mint from (even a
@@ -237,7 +249,7 @@ class PelotonWorker:
         if entries or not any(r.suspicious for r in results):
             telemetry = build_telemetry(
                 activity_results=results,
-                numbering_snapshot=numberer.snapshot(),
+                numbering_snapshot=numbering_snapshot,
                 duration_ms=self._elapsed_ms(start),
                 alarms=alarms,
             )
@@ -293,8 +305,10 @@ class PelotonWorker:
         scraper = PelotonScraper(ScrapeConfig(
             max_classes=1, dynamic_scrolling=True, max_scrolls=3,
             scroll_pause_sec=pelo.scroll_pause_sec, page_load_wait_sec=pelo.page_load_wait_sec))
-        numberer = EpisodeNumberer({})
         for activity in pelo.activities:
+            # Numbering is discarded here (we only need one player URL to mint a
+            # bearer) — a fresh per-activity numberer keeps the invariant clean.
+            numberer = EpisodeNumberer({})
             r = scraper.scrape_activity(driver, activity, set(), numberer, pelo.media_root)
             if r.entries:
                 return r.entries[0].download_ref

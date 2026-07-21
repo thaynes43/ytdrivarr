@@ -95,6 +95,17 @@ def test_validation_yaml_is_live_shape(tmp_path):
     assert "= Cycling (30 min)" in data["Plex TV Show by Date"]
 
 
+def test_validation_telemetry_high_water_is_per_activity(tmp_path):
+    # The validate seam mirrors the worker: numbering telemetry is keyed by
+    # activity ({slug: {durationString: max}}). Dry-run seeds empty -> starts at 1.
+    links = [make_class_link("v1", "30 min Ride", "Cody Rigsby")]
+    report = run_validation(
+        activities=["cycling"], scratch=str(tmp_path / "out"),
+        media_root="/media/peloton", deps=_deps(links),
+    )
+    assert report["telemetry"]["episodeHighWater"] == {"cycling": {"30": 1}}
+
+
 def test_validation_login_failure_writes_nothing(tmp_path):
     scratch = tmp_path / "out"
     report = run_validation(

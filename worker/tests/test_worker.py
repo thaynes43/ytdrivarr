@@ -8,7 +8,7 @@ from ytdrivarr_peloton_worker.errors import BearerCaptureError
 from ytdrivarr_peloton_worker.login import LoginOutcome, LoginResult
 from ytdrivarr_peloton_worker.scraper import ActivityScrapeResult
 from ytdrivarr_peloton_worker.transport import Job
-from ytdrivarr_peloton_worker.worker import PelotonWorker, WorkerConfig
+from ytdrivarr_peloton_worker.worker import PelotonPayload, PelotonWorker, WorkerConfig
 
 CONFIG = WorkerConfig(
     core_url="http://core.test", api_key="k", worker_name="w1",
@@ -91,6 +91,40 @@ class FakeScraper:
 
     def scrape_activity(self, driver, activity, existing, numberer, media_root):
         return self.results.get(activity, ActivityScrapeResult(activity=activity))
+
+
+class NumberingScraper:
+    """A scraper fake that ACTUALLY numbers via the numberer the worker hands it,
+    exactly like the real PelotonScraper (skip-existing then ``numberer.next``),
+    so the worker's PER-ACTIVITY seeding is exercised end-to-end.
+
+    ``classes`` maps ``{activity: [(class_id, duration_minutes), ...]}``.
+    """
+
+    def __init__(self, classes):
+        self.classes = classes
+
+    def scrape_activity(self, driver, activity, existing, numberer, media_root):
+        entries = []
+        candidates = 0
+        for cid, duration in self.classes.get(activity, []):
+            if cid in existing:  # skipped BEFORE numbering -> consumes no number
+                continue
+            candidates += 1
+            episode = numberer.next(duration)
+            entries.append(
+                build_entry(
+                    ScrapedClass(class_id=cid, title=f"{duration} min Class",
+                                 instructor="Inst", activity=activity, duration=duration,
+                                 season=duration, episode=episode),
+                    media_root,
+                )
+            )
+        links = len(self.classes.get(activity, []))
+        return ActivityScrapeResult(
+            activity=activity, entries=entries, links_found=links,
+            new_candidates=candidates, skipped_existing=links - candidates,
+        )
 
 
 def make_worker(client, *, login=None, scraper=None, minter=None, hb=None):
@@ -232,3 +266,99 @@ def test_refresh_mode_mints_bearer_only():
     assert payload["entries"] == []
     assert payload["session"]["bearer"] == "Bearer tok"
     assert payload["telemetry"]["mode"] == "refresh"
+
+
+# -- per-(activity, duration) numbering (the contract fix) --------------------
+def test_per_activity_numbering_independence():
+    """Test #1 — THE regression test for the flat bug.
+
+    One run scrapes ``cardio`` then ``cycling``, both with 30-min classes, seeded
+    independently. Under the old (flat) model a single 30-min counter would be
+    shared and cardio's new classes would land at 2151+. Under the contract each
+    activity holds its OWN band: cardio continues 222 -> E223, E224 while cycling
+    continues 2150 -> E2151, E2152. Both sequences asserted explicitly.
+    """
+    scraper = NumberingScraper({
+        "cardio": [("ca1", 30), ("ca2", 30)],
+        "cycling": [("cy1", 30), ("cy2", 30)],
+    })
+    job = _scrape_job(
+        activities=["cardio", "cycling"],
+        episodeNumbering={"cardio": {"30": 222}, "cycling": {"30": 2150}},
+    )
+    client = FakeClient(jobs=[job])
+    worker = make_worker(client, scraper=scraper)
+    assert worker.run_once() is True
+
+    entries = client.reported[0][1]["entries"]
+    eps = {e["entryKey"]: e["overrides"]["episode_number"] for e in entries}
+    assert eps["ca1"] == 223 and eps["ca2"] == 224   # cardio's own band
+    assert eps["cy1"] == 2151 and eps["cy2"] == 2152  # cycling's own, disjoint band
+
+
+def test_worker_report_carries_per_activity_numbering():
+    """Test #6 — the full loop's report body carries per-activity numbering under
+    the new contract, both in the entry overrides AND the telemetry high-water."""
+    scraper = NumberingScraper({
+        "cardio": [("ca1", 30), ("ca2", 30)],
+        "cycling": [("cy1", 30), ("cy2", 30)],
+    })
+    job = _scrape_job(
+        activities=["cardio", "cycling"],
+        episodeNumbering={"cardio": {"30": 222}, "cycling": {"30": 2150}},
+    )
+    client = FakeClient(jobs=[job])
+    make_worker(client, scraper=scraper).run_once()
+
+    _, payload = client.reported[0]
+    # Per-activity high-water in telemetry (nested {slug: {durationString: max}}).
+    assert payload["telemetry"]["episodeHighWater"] == {
+        "cardio": {"30": 224},
+        "cycling": {"30": 2152},
+    }
+    by_key = {e["entryKey"]: e for e in payload["entries"]}
+    assert by_key["ca2"]["overrides"]["episode_number"] == 224
+    assert by_key["cy2"]["overrides"]["episode_number"] == 2152
+
+
+def test_unseeded_activity_numbers_from_one():
+    """Test #2 at the worker seam — an activity absent from episodeNumbering seeds
+    empty (``.get(activity, {})``) so its classes start at E1, per duration."""
+    scraper = NumberingScraper({"yoga": [("y1", 20), ("y2", 20), ("y3", 30)]})
+    job = _scrape_job(activities=["yoga"],
+                      episodeNumbering={"cycling": {"30": 2150}})  # yoga NOT seeded
+    client = FakeClient(jobs=[job])
+    make_worker(client, scraper=scraper).run_once()
+
+    eps = {e["entryKey"]: e["overrides"]["episode_number"]
+           for e in client.reported[0][1]["entries"]}
+    # 20-min band (y1,y2) and 30-min band (y3) both start at 1 independently.
+    assert eps == {"y1": 1, "y2": 2, "y3": 1}
+
+
+def test_existing_ids_do_not_consume_numbers():
+    """Test #5 — a class already in existingClassIds is skipped BEFORE numbering,
+    so it consumes no episode number; the next new class gets max+1, not max+2."""
+    scraper = NumberingScraper({"cardio": [("old", 30), ("new", 30)]})
+    job = _scrape_job(activities=["cardio"], existingClassIds=["old"],
+                      episodeNumbering={"cardio": {"30": 222}})
+    client = FakeClient(jobs=[job])
+    make_worker(client, scraper=scraper).run_once()
+
+    entries = client.reported[0][1]["entries"]
+    assert [e["entryKey"] for e in entries] == ["new"]
+    assert entries[0]["overrides"]["episode_number"] == 223  # not 224
+
+
+def test_from_job_parses_nested_string_duration_keys():
+    """Test #4 — the payload boundary parses {activitySlug: {durationString: max}}
+    and coerces the JSON string duration keys to int (activity slugs stay str)."""
+    job = _scrape_job(
+        activities=["cycling", "cardio"],
+        episodeNumbering={"cycling": {"30": 2150, "20": 40}, "cardio": {"30": 222}},
+    )
+    pelo = PelotonPayload.from_job(job)
+    assert pelo.episode_numbering == {
+        "cycling": {30: 2150, 20: 40},
+        "cardio": {30: 222},
+    }
