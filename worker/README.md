@@ -39,12 +39,12 @@ worker/
 
 Base URL + API key from env (`YTDRIVARR_CORE_URL`, `YTDRIVARR_API_KEY`), `X-Api-Key` auth.
 
-| Endpoint | Body | Response |
-|---|---|---|
-| `POST /api/v1/jobs/claim` | `{worker, kinds?, providerId?}` | `{job:{id,kind,providerId,payload,attempts}\|null}` |
-| `POST /api/v1/jobs/:id/heartbeat` | `{worker}` | `{ok:true}` (409 ⇒ reclaimed ⇒ abort) |
-| `POST /api/v1/jobs/:id/report` | `{worker, result:{entries,session,telemetry,summary}}` | `{}` |
-| `POST /api/v1/jobs/:id/fail` | `{worker, error, retryable, alarm?}` | `{}` |
+| Endpoint                          | Body                                                   | Response                                            |
+| --------------------------------- | ------------------------------------------------------ | --------------------------------------------------- |
+| `POST /api/v1/jobs/claim`         | `{worker, kinds?, providerId?}`                        | `{job:{id,kind,providerId,payload,attempts}\|null}` |
+| `POST /api/v1/jobs/:id/heartbeat` | `{worker}`                                             | `{ok:true}` (409 ⇒ reclaimed ⇒ abort)               |
+| `POST /api/v1/jobs/:id/report`    | `{worker, result:{entries,session,telemetry,summary}}` | `{}`                                                |
+| `POST /api/v1/jobs/:id/fail`      | `{worker, error, retryable, alarm?}`                   | `{}`                                                |
 
 Each reported entry serializes to the live-file shape:
 
@@ -123,23 +123,23 @@ ruff check src tests
 
 ## Hardening deltas vs the donor
 
-| Leg | Donor | Here |
-|---|---|---|
-| Login waits | `time.sleep(10)` then `time.sleep(15)` | explicit `WebDriverWait`s for the username/password fields and post-submit navigation |
-| Login result | `bool` (`"login" not in url`) | typed `ok\|bad_credentials\|mfa_required\|captcha\|redirect\|timeout` |
-| Login MFA/captcha | none | detected + distinguished, mapped to a non-retryable `login` alarm |
-| Login retries | none | backoff retry on transient timeout/redirect |
-| Bearer poll | `time.sleep(0.5)` loop ≤15s | `WebDriverWait` on a capture predicate (JS hook + CDP perf log) |
-| Bearer failure | bare `RuntimeError`, whole run fails silently | typed `BearerCaptureError` → `fail(retryable, alarm=bearer_capture)`; never a stale/empty token |
-| Bearer retries | none | re-navigate + retry with backoff |
-| Bearer freshness | none | best-effort JWT `exp` decode → `expiresAt` for the SLA |
-| Scrape page-load | `time.sleep(10)` | `WebDriverWait` for ≥1 class link |
-| Scroll | blind `time.sleep(3)` × N | per-scroll `WebDriverWait` for link growth + stall/bottom detection |
-| Stale elements | uncaught | retried (bounded) without losing collected/numbered classes |
-| Zero/malformed hits | silently yields nothing | typed `selector_drift` / `scroll_timeout` signals → alarm (D-10) |
-| Numbering | rounding-to-nearest-5 latent inconsistency | RAW duration minutes only (owner ruling: parity) |
-| Telemetry | text summaries into logs / PR body | structured `telemetry` + `summary` + `alarms[]` in the report |
-| Heartbeat / reclaim | n/a (batch CLI) | background heartbeat thread; 409 aborts the job cleanly |
+| Leg                 | Donor                                         | Here                                                                                            |
+| ------------------- | --------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Login waits         | `time.sleep(10)` then `time.sleep(15)`        | explicit `WebDriverWait`s for the username/password fields and post-submit navigation           |
+| Login result        | `bool` (`"login" not in url`)                 | typed `ok\|bad_credentials\|mfa_required\|captcha\|redirect\|timeout`                           |
+| Login MFA/captcha   | none                                          | detected + distinguished, mapped to a non-retryable `login` alarm                               |
+| Login retries       | none                                          | backoff retry on transient timeout/redirect                                                     |
+| Bearer poll         | `time.sleep(0.5)` loop ≤15s                   | `WebDriverWait` on a capture predicate (JS hook + CDP perf log)                                 |
+| Bearer failure      | bare `RuntimeError`, whole run fails silently | typed `BearerCaptureError` → `fail(retryable, alarm=bearer_capture)`; never a stale/empty token |
+| Bearer retries      | none                                          | re-navigate + retry with backoff                                                                |
+| Bearer freshness    | none                                          | best-effort JWT `exp` decode → `expiresAt` for the SLA                                          |
+| Scrape page-load    | `time.sleep(10)`                              | `WebDriverWait` for ≥1 class link                                                               |
+| Scroll              | blind `time.sleep(3)` × N                     | per-scroll `WebDriverWait` for link growth + stall/bottom detection                             |
+| Stale elements      | uncaught                                      | retried (bounded) without losing collected/numbered classes                                     |
+| Zero/malformed hits | silently yields nothing                       | typed `selector_drift` / `scroll_timeout` signals → alarm (D-10)                                |
+| Numbering           | rounding-to-nearest-5 latent inconsistency    | RAW duration minutes only (owner ruling: parity)                                                |
+| Telemetry           | text summaries into logs / PR body            | structured `telemetry` + `summary` + `alarms[]` in the report                                   |
+| Heartbeat / reclaim | n/a (batch CLI)                               | background heartbeat thread; 409 aborts the job cleanly                                         |
 
 ## Assumptions the coordinator should confirm in the live dry-run
 

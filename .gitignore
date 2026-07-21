@@ -12,3 +12,4 @@ worker/**/__pycache__/
 worker/**/*.pyc
 worker/build/
 worker/**/*.egg-info/
+worker/.pytest_cache/
