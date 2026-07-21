@@ -140,6 +140,18 @@ export function parseChip(
 }
 
 /**
+ * Resolve the canonical activity SLUG from an entry's chip (the `= {Activity} ({N} min)` label
+ * WITHOUT the leading `= `, e.g. `Bike Bootcamp (30 min)` → `bike_bootcamp`, `Tread Bootcamp (…)` →
+ * `bootcamp`, `Cycling (…)` → `cycling`). The single reuse point for chip → slug derivation the
+ * per-(activity, duration) numbering seed is keyed by. Returns undefined for a null/empty chip or one
+ * that isn't the `{Activity} ({N} min)` shape (the entry then attributes to no activity bucket).
+ */
+export function activitySlugFromChip(chip: string | null | undefined): string | undefined {
+  if (!chip) return undefined;
+  return parseChip(chip)?.activity;
+}
+
+/**
  * The folder config the discovery payload carries to the out-of-process worker (D-03) so the
  * activity→folder mapping lives in ONE place (core) and the Python worker applies the SAME rules
  * rather than re-hardcoding them. Shape is deliberately explicit for the worker contract.

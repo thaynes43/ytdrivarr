@@ -43,6 +43,16 @@ export const pelotonSettingsSchema = z.object({
   scrollPauseSec: z.number().positive().default(3),
   pageLoadWaitSec: z.number().positive().default(10),
   loginWaitSec: z.number().positive().default(15),
+  /**
+   * Optional filesystem root to scan for already-downloaded episodes (the DISK half of the donor's
+   * merged episode data, D-06). When set, `buildDiscoveryPayload` walks
+   * `{diskScanPath}/{Activity}/{Instructor}/S{season}E{episode} …/` leaf folders and merges the
+   * per-(activity, duration) episode maxima into the subscription-derived numbering seed (max per
+   * key wins). Undefined (default) skips the disk scan. In-cluster this is `/projections/peloton`:
+   * the core mounts the media tree at `/projections`, while the downloader sees the same tree at
+   * `/media/peloton`.
+   */
+  diskScanPath: z.string().min(1).optional(),
 });
 export type PelotonSettings = z.infer<typeof pelotonSettingsSchema>;
 

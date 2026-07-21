@@ -75,7 +75,7 @@ describe('pelotonProvider — C1 contract', () => {
   });
 });
 
-describe('numbering — RAW duration + GLOBAL per-duration + classId', () => {
+describe('numbering — RAW duration + PER-ACTIVITY per-duration + classId', () => {
   it('parses RAW duration minutes (no round-to-5)', () => {
     expect(parseDurationMinutes('30 min HIIT Cardio with Rad Lopez')).toBe(30);
     expect(parseDurationMinutes('45 min Tread Bootcamp')).toBe(45);
@@ -98,24 +98,32 @@ describe('numbering — RAW duration + GLOBAL per-duration + classId', () => {
     expect(playerUrl('abc')).toBe('https://members.onepeloton.com/classes/player/abc');
   });
 
-  it('seeds GLOBAL per-duration numbering = max episode across ALL activities of a duration', () => {
-    // season 30 spans multiple activities (Cardio E222, Bike Bootcamp E730, Cycling E2150)
+  it('seeds PER-ACTIVITY per-duration numbering = max episode for each activity at each duration', () => {
+    // season 30 spans multiple activities as DISJOINT bands (Cardio E222, Bike Bootcamp E730,
+    // Cycling E2150) — impossible under one shared duration counter; each activity keeps its own.
     const seed = episodeNumberingFromEntries([
-      { seasonNumber: 30, episodeNumber: 222 },
-      { seasonNumber: 30, episodeNumber: 730 },
-      { seasonNumber: 30, episodeNumber: 2150 },
-      { seasonNumber: 45, episodeNumber: 536 },
-      { seasonNumber: 45, episodeNumber: 176 },
-      { seasonNumber: 10, episodeNumber: null },
+      { chip: 'Cardio (30 min)', seasonNumber: 30, episodeNumber: 222 },
+      { chip: 'Bike Bootcamp (30 min)', seasonNumber: 30, episodeNumber: 730 },
+      { chip: 'Cycling (30 min)', seasonNumber: 30, episodeNumber: 2150 },
+      { chip: 'Cycling (30 min)', seasonNumber: 30, episodeNumber: 2026 }, // lower → ignored
+      { chip: 'Cycling (45 min)', seasonNumber: 45, episodeNumber: 536 },
+      { chip: 'Cycling (45 min)', seasonNumber: 45, episodeNumber: 176 },
+      { chip: 'Meditation (10 min)', seasonNumber: 10, episodeNumber: null }, // null → skipped
     ]);
-    expect(seed).toEqual({ '30': 2150, '45': 536 });
+    expect(seed).toEqual({
+      cardio: { '30': 222 },
+      bike_bootcamp: { '30': 730 },
+      cycling: { '30': 2150, '45': 536 },
+    });
   });
 
-  it('continues a duration sequence with donor pre-increment', () => {
-    const numbering = { '30': 2150 };
-    expect(nextEpisodeNumber(numbering, 30)).toBe(2151);
-    expect(nextEpisodeNumber(numbering, 30)).toBe(2152);
-    expect(nextEpisodeNumber(numbering, 20)).toBe(1); // unseen duration starts at 1
+  it('continues EACH activity’s own sequence independently (per-activity pre-increment)', () => {
+    const numbering = { cardio: { '30': 222 }, cycling: { '30': 2150 } };
+    // same duration (30), two activities — each advances on ITS OWN band (the flat-model bug regressed).
+    expect(nextEpisodeNumber(numbering, 'cardio', 30)).toBe(223);
+    expect(nextEpisodeNumber(numbering, 'cycling', 30)).toBe(2151);
+    expect(nextEpisodeNumber(numbering, 'cycling', 30)).toBe(2152);
+    expect(nextEpisodeNumber(numbering, 'yoga', 20)).toBe(1); // unseen (activity,duration) starts at 1
   });
 });
 

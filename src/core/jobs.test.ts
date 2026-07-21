@@ -102,7 +102,7 @@ afterAll(async () => {
 });
 
 describe('buildDiscoveryPayload', () => {
-  it('builds existingClassIds + GLOBAL-per-duration episodeNumbering from seeded entries', async () => {
+  it('builds existingClassIds + PER-ACTIVITY per-duration episodeNumbering from seeded entries', async () => {
     const lib = await seedLibrary();
     const src = await seedSource(lib.id);
     await mergeEntriesForSource(
@@ -118,8 +118,9 @@ describe('buildDiscoveryPayload', () => {
     expect(payload.sourceId).toBe(src.id);
     expect(payload.libraryId).toBe(lib.id);
     expect([...payload.peloton.existingClassIds].sort()).toEqual(['aaa', 'bbb', 'ccc']);
-    // GLOBAL per-duration: max across ALL activities of a duration (contract shape {duration:max}).
-    expect(payload.peloton.episodeNumbering).toEqual({ '30': 2150, '45': 176 });
+    // PER-ACTIVITY nested: the `entry()` helper chips everything as Cycling, so the seed nests under
+    // `cycling` — max episode per duration (contract shape {activitySlug:{duration:max}}).
+    expect(payload.peloton.episodeNumbering).toEqual({ cycling: { '30': 2150, '45': 176 } });
     expect(payload.peloton.mediaRoot).toBe('/media/peloton');
     expect(payload.peloton.maxClassesPerActivity).toBe(25);
     expect(payload.peloton.folder.folderNames.bike_bootcamp).toBe('Bike Bootcamp');

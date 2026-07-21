@@ -12,7 +12,12 @@ import { finishRun, getRun, recordRunTelemetry } from '../domain/runs';
 import { buildRunSummary, runSummaryToJson } from '../domain/run-summary';
 import { pelotonSettingsSchema, PELOTON_CREDENTIAL_REFRESH_SEC } from '../providers/peloton';
 import { buildFolderConfig, type FolderConfig } from '../providers/peloton/folder-mapping';
-import { episodeNumberingFromEntries } from '../providers/peloton/numbering';
+import {
+  episodeNumberingFromEntries,
+  mergeNumbering,
+  type NestedNumbering,
+} from '../providers/peloton/numbering';
+import { episodesFromDisk } from '../providers/peloton/episodes-from-disk';
 
 /**
  * The out-of-process transport (DESIGN-045 D-03) — the `jobs` table + a claim/heartbeat/report/fail
@@ -46,8 +51,13 @@ export interface PelotonDiscoveryPayload {
   loginWaitSec: number;
   /** the classIds already persisted for this source — the worker skips them (dedup, D-06). */
   existingClassIds: string[];
-  /** GLOBAL-per-duration seed: {duration → current max episode} across ALL activities (D-06). */
-  episodeNumbering: Record<string, number>;
+  /**
+   * Per-(activity, duration) numbering seed `{ [activitySlug]: { [durationString]: maxEpisode } }`
+   * (D-06) — each activity's own per-duration max, mirroring the donor's per-activity
+   * `ActivityData.max_episode` (`application.py` 341-347). Folds in the optional disk scan when the
+   * source sets `diskScanPath` (max per key). The worker continues EACH activity's sequence.
+   */
+  episodeNumbering: NestedNumbering;
   mediaRoot: string;
   folder: FolderConfig;
 }
@@ -84,9 +94,11 @@ function toClaimedJob(job: Job): ClaimedJob {
 
 /**
  * Build a discovery job's full payload at enqueue time (the CORE owns this). `existingClassIds` and
- * the GLOBAL-per-duration `episodeNumbering` seed are computed from the source's PERSISTED entries
- * (entryKey = classId; episodeNumbering[duration] = max episode where season = duration, across all
- * activities). `mode:'refresh'` produces the same payload but signals mint-bearer-only (no scrape).
+ * the per-(activity, duration) `episodeNumbering` seed are computed from the source's PERSISTED
+ * entries (entryKey = classId; episodeNumbering[activitySlug][duration] = max episode for that
+ * activity at that duration, activity resolved from each entry's chip). When the source sets
+ * `diskScanPath`, the disk scan is folded in (max per key), mirroring the donor's disk ⊔
+ * subscriptions merge. `mode:'refresh'` produces the same payload but signals mint-bearer-only.
  */
 export async function buildDiscoveryPayload(
   args: { runId: string; source: Source; library: Library; mode?: 'scrape' | 'refresh' },
@@ -95,8 +107,11 @@ export async function buildDiscoveryPayload(
   const { runId, source, library } = args;
   const rows = await listEntriesForSource(source.id, exec);
   const existingClassIds = rows.map((r) => r.entryKey);
-  const episodeNumbering = episodeNumberingFromEntries(rows);
   const settings = pelotonSettingsSchema.parse(source.settings);
+  const subsNumbering = episodeNumberingFromEntries(rows);
+  const episodeNumbering = settings.diskScanPath
+    ? mergeNumbering(subsNumbering, episodesFromDisk(settings.diskScanPath))
+    : subsNumbering;
 
   return {
     runId,

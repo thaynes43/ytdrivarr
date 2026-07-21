@@ -1,27 +1,40 @@
 /**
  * Peloton numbering + classId extraction (DESIGN-045 D-06) — ported from the donor
- * `scraper_strategy.py` (`extract_duration_from_title` lines 187-201; the per-duration episode
- * counter lines 98-114) and `episodes_from_subscriptions.py` (classId extraction, lines 262-272).
+ * `scraper_strategy.py` (`extract_duration_from_title` lines 187-201) and `application.py`
+ * (the per-activity episode counter, lines 341-386, seeded from `ActivityData.max_episode`,
+ * `core/models.py:30` — `Dict[int, int]  # season -> highest episode number`).
  *
  * TWO parity decisions the donor left latent, resolved here (Q-03 §"Peloton logic"):
  *
  *  1. RAW duration, NOT rounded. `season_number = duration` from the RAW `^\s*(\d+)\s*min` parse;
  *     the donor's `round(d/5)*5` default (`media_source_strategy.py`) is DEAD CODE the scrape path
- *     never reaches. Keep RAW.
- *  2. GLOBAL per-duration episode numbering — the numbering state is keyed by DURATION ONLY (this is
- *     the M3 interface CONTRACT the out-of-process worker consumes: `episodeNumbering:{<duration>:
- *     <max>}`). `season_number` IS the duration in minutes; the seed for each duration is the current
- *     max episode across ALL activities of that duration and the worker continues that one sequence
- *     (donor pre-increment: a duration whose max is E7 gives the next new class E8).
+ *     never reaches. Keep RAW (35 stays 35, 22 stays 22).
+ *  2. PER-ACTIVITY, per-duration episode numbering (the CORRECTED M3 interface contract — supersedes
+ *     the earlier flat global-per-duration model). The donor `application.py` (lines 341-347) rebuilds
+ *     the numbering dict PER ACTIVITY: `episode_numbering = dict(merged_data[activity].max_episode)` —
+ *     a fresh `{season(=duration): max_episode}` dict seeded from THAT activity's own per-season max
+ *     (merged across disk + subscriptions), handed to that activity's ScrapingConfig. So the seed the
+ *     out-of-process worker consumes is nested:
  *
- *  NOTE (integration risk, flagged to the coordinator): the donor's `application.py` rebuilds the
- *  numbering dict PER ACTIVITY from that activity's own `max_episode`, and the live file's disjoint
- *  per-activity episode blocks at a shared season (e.g. season 30: Cardio E221-222 vs Cycling
- *  E2026-2150, with large gaps) are more consistent with PER-(activity,duration) counters than one
- *  shared duration counter. This module implements the flat duration-keyed CONTRACT as specified
- *  (so it matches the parallel worker's payload shape); if the estate needs per-activity continuation
- *  the contract must change on BOTH sides together.
+ *         episodeNumbering: { [activitySlug]: { [durationString]: maxEpisode } }
+ *
+ *     Each activity continues ITS OWN sequence (donor pre-increment): cardio S30 max E222 → next E223
+ *     while cycling S30 max E2150 → next E2151 — disjoint bands at the SAME season, impossible under
+ *     one shared duration counter. The live file proves it: within a single 15-day purge window,
+ *     season 30 carries Cardio E221-222 alongside Cycling E2026-2150. This module and the parallel
+ *     worker's payload shape are changed together to match EXACTLY.
  */
+
+import { activitySlugFromChip } from './folder-mapping';
+
+/**
+ * The per-activity, per-duration numbering seed the discovery payload carries to the worker (the
+ * CONTRACT shape): `{ [activitySlug]: { [durationString]: maxEpisode } }`. Duration keys are
+ * stringified integers (JSON object keys); values are the current MAX `episode_number` for that
+ * (activity, duration). Mirrors the donor `Dict[Activity, ActivityData]` where each activity's
+ * `ActivityData.max_episode` is `Dict[int, int]` (season → highest episode).
+ */
+export type NestedNumbering = Record<string, Record<string, number>>;
 
 /**
  * Parse the class duration in minutes from a Peloton class title — RAW minutes (donor
@@ -62,39 +75,74 @@ export function playerUrl(classId: string): string {
   return `https://members.onepeloton.com/classes/player/${classId}`;
 }
 
-/** The shape an existing persisted entry contributes to the numbering seed (season = duration). */
+/**
+ * The shape an existing persisted entry contributes to the numbering seed. `chip` (the
+ * `= {Activity} ({N} min)` group label WITHOUT the leading `= `) carries the activity — resolved to
+ * its canonical slug via `activitySlugFromChip`; `seasonNumber` IS the duration in minutes.
+ */
 export interface NumberedLike {
+  chip: string | null;
   seasonNumber: number | null;
   episodeNumber: number | null;
 }
 
 /**
- * The GLOBAL-per-duration seed the discovery payload carries to the worker (the CONTRACT shape
- * `{<duration>: <max>}`): for each duration (= season_number) present in the source's persisted
- * entries, the CURRENT MAX episode number across ALL activities of that duration. The worker
- * continues each duration's sequence from this max.
+ * The per-(activity, duration) seed the discovery payload carries to the worker: for each activity
+ * present in the source's persisted entries, the CURRENT MAX episode number per duration. The worker
+ * continues each activity's own duration sequence from this max. Entries whose activity slug can't be
+ * resolved from their chip, or with null numbering, contribute to no activity bucket (donor: an
+ * unmapped activity is dropped, `activity_based_path_strategy._map_activity_name` → None).
  */
-export function episodeNumberingFromEntries(
-  entries: readonly NumberedLike[],
-): Record<string, number> {
-  const maxByDuration: Record<string, number> = {};
+export function episodeNumberingFromEntries(entries: readonly NumberedLike[]): NestedNumbering {
+  const result: NestedNumbering = {};
   for (const entry of entries) {
     if (entry.seasonNumber === null || entry.episodeNumber === null) continue;
-    const key = String(entry.seasonNumber);
-    if ((maxByDuration[key] ?? 0) < entry.episodeNumber) maxByDuration[key] = entry.episodeNumber;
+    const slug = activitySlugFromChip(entry.chip);
+    if (!slug) continue;
+    const durationKey = String(entry.seasonNumber);
+    const byDuration = (result[slug] ??= {});
+    if ((byDuration[durationKey] ?? 0) < entry.episodeNumber) {
+      byDuration[durationKey] = entry.episodeNumber;
+    }
   }
-  return maxByDuration;
+  return result;
 }
 
 /**
- * The canonical next-episode rule the worker mirrors (donor pre-increment): given the running
- * per-duration max map and a duration, return the next episode number AND record it back so the next
- * class of the same duration continues the sequence. Keyed by duration ONLY (the GLOBAL-per-duration
- * contract). Kept core-side as the parity reference + for tests.
+ * Merge two nested numbering maps taking the MAX episode per (activity, duration) key (donor
+ * `ActivityData.merge_collections`, `core/models.py:53-71` — `max(ep1, ep2)` per season per
+ * activity). Used to fold the optional disk scan into the subscription-derived seed (D-06). Disjoint
+ * keys from either side survive; where both carry a key, the larger episode wins. Neither input is
+ * mutated.
  */
-export function nextEpisodeNumber(numbering: Record<string, number>, duration: number): number {
+export function mergeNumbering(a: NestedNumbering, b: NestedNumbering): NestedNumbering {
+  const result: NestedNumbering = {};
+  for (const source of [a, b]) {
+    for (const [slug, byDuration] of Object.entries(source)) {
+      const target = (result[slug] ??= {});
+      for (const [durationKey, episode] of Object.entries(byDuration)) {
+        if ((target[durationKey] ?? 0) < episode) target[durationKey] = episode;
+      }
+    }
+  }
+  return result;
+}
+
+/**
+ * The canonical next-episode rule the worker mirrors (donor pre-increment,
+ * `ActivityData.get_next_episode` = `max_episode.get(season, 0) + 1`): given the running per-activity
+ * nested max map, an activity slug, and a duration, return the next episode number AND record it back
+ * so the next class of the SAME (activity, duration) continues the sequence. Keyed by (activity,
+ * duration) so each activity advances independently. Kept core-side as the parity reference + tests.
+ */
+export function nextEpisodeNumber(
+  numbering: NestedNumbering,
+  activity: string,
+  duration: number,
+): number {
+  const byDuration = (numbering[activity] ??= {});
   const key = String(duration);
-  const next = (numbering[key] ?? 0) + 1;
-  numbering[key] = next;
+  const next = (byDuration[key] ?? 0) + 1;
+  byDuration[key] = next;
   return next;
 }
