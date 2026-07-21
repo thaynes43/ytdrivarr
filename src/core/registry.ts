@@ -1,13 +1,18 @@
 import { validateProvider, type SourceProvider } from '../contracts';
 import { inCoreUrlListProvider } from '../providers/in-core-url-list';
+import { youtubeProvider } from '../providers/youtube';
 
 /**
  * The TYPED provider registry (DESIGN-045 D-04) — a COMPILE-TIME map, not the donor's string-import
  * DI. A provider that fails validation is a STARTUP ERROR (`loadRegistry` throws), never a silent
  * skip. New providers (M2 YouTube, M3 Peloton) are added here as another map entry.
+ *
+ * `in-core-url-list` stays as the trivial `[]`-capability reference provider (the negation proof);
+ * `youtube` is the M2 real Tier-1 provider supporting BOTH preset families (video + music).
  */
 export const PROVIDERS = {
   [inCoreUrlListProvider.id]: inCoreUrlListProvider,
+  [youtubeProvider.id]: youtubeProvider,
 } satisfies Record<string, SourceProvider>;
 
 export type ProviderId = keyof typeof PROVIDERS;

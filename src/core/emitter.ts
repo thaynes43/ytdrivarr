@@ -40,6 +40,19 @@ function renderEntryValue(entry: SubscriptionEntry): unknown {
 }
 
 /**
+ * Deterministic emit order (chip, then displayName) so re-rendering identical state produces a
+ * byte-identical file — the churn-free projection D-14 promises. YAML object key order follows
+ * insertion, and structural equality is order-independent, so sorting only stabilizes the bytes;
+ * it never changes the shape a downloader reads.
+ */
+function sortEntries(entries: SubscriptionEntry[]): SubscriptionEntry[] {
+  return [...entries].sort((a, b) => {
+    const chip = (a.chip ?? '').localeCompare(b.chip ?? '');
+    return chip !== 0 ? chip : a.displayName.localeCompare(b.displayName);
+  });
+}
+
+/**
  * Compose a Library's `config.yaml` + `subscriptions.yaml` from its (already deduped + numbered)
  * entries. Entries group under their `= <chip>` label within the single named preset block.
  */
@@ -47,7 +60,7 @@ export function emitLibrary(library: EmitLibrary, entries: SubscriptionEntry[]):
   const configDoc = { configuration: { working_directory: library.workingDirectory } };
 
   const presetBlock: Record<string, unknown> = {};
-  for (const entry of entries) {
+  for (const entry of sortEntries(entries)) {
     const value = renderEntryValue(entry);
     if (entry.chip) {
       const chipKey = `= ${entry.chip}`;

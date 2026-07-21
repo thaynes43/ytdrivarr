@@ -10,10 +10,13 @@
  */
 import { serve } from '@hono/node-server';
 import { mkdtemp } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { bootTestDb } from '../src/testing/db';
 import { createApp } from '../src/api/app';
+import { parseSubscriptionsYaml, deriveMusicEmitPolicy } from '../src/core/import-ytdl-sub';
 import { logger } from '../src/logger';
 
 const KEY = 'demo-key';
@@ -32,44 +35,44 @@ async function main(): Promise<void> {
       body: JSON.stringify(body),
     });
 
-  const libRes = await post('/api/v1/libraries', {
-    name: 'YouTube',
-    mediaRoot: '/media/youtube',
-    libraryKind: 'video',
-    presetName: 'Plex TV Show by Date',
-    projectionPath: 'youtube',
-    emitPolicy: { overrides: { tv_show_directory: '/media/youtube' } },
-  });
-  const library = (await libRes.json()) as { id: string };
+  // Seed the console with a realistic M2 dataset: import the estate's live subscriptions.yaml into
+  // a video Library + a music Library (the Q-03 override), then run discovery so both families
+  // render. Uses the same `youtube` provider + import path the cutover uses.
+  const fixture = readFileSync(
+    fileURLToPath(
+      new URL('../src/testing/fixtures/estate-youtube-subscriptions.yaml', import.meta.url),
+    ),
+    'utf8',
+  );
+  const parsed = parseSubscriptionsYaml(fixture);
+  const musicPolicy = deriveMusicEmitPolicy(parsed.preset, '/media/youtube-music');
 
-  const sources = [
-    {
-      displayName: 'Alex Meyers',
-      ref: 'https://www.youtube.com/@AlexMeyersVids',
-      chip: 'Animation',
-    },
-    {
-      displayName: 'Defunctland',
-      ref: 'https://www.youtube.com/@Defunctland',
-      chip: 'Documentaries',
-    },
-    {
-      displayName: 'Technology Connections',
-      ref: 'https://www.youtube.com/@TechnologyConnections',
-      chip: 'Technology',
-    },
-  ];
-  for (const s of sources) {
-    await post('/api/v1/sources', {
-      libraryId: library.id,
-      providerId: 'in-core-url-list',
-      kind: 'url-list',
-      mediaKind: 'video',
-      displayName: s.displayName,
-      ref: s.ref,
-      settings: { chip: s.chip },
-    });
-  }
+  const videoLib = (await (
+    await post('/api/v1/libraries', {
+      name: 'YouTube',
+      mediaRoot: '/media/youtube',
+      libraryKind: 'video',
+      presetName: 'Plex TV Show by Date',
+      projectionPath: 'youtube',
+    })
+  ).json()) as { id: string };
+  const musicLib = (await (
+    await post('/api/v1/libraries', {
+      name: 'YouTube Music',
+      mediaRoot: '/media/youtube-music',
+      libraryKind: 'music',
+      presetName: 'YouTube Releases',
+      projectionPath: 'youtube-music',
+      emitPolicy: musicPolicy,
+    })
+  ).json()) as { id: string };
+
+  await post('/api/v1/import/ytdl-sub', {
+    subscriptionsYaml: fixture,
+    videoLibraryId: videoLib.id,
+    musicLibraryId: musicLib.id,
+    applyPreset: true,
+  });
   await post('/api/v1/runs', { scope: 'all', trigger: 'api' });
 
   serve({ fetch: app.fetch, port: PORT }, () => {

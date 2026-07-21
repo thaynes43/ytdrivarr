@@ -179,4 +179,38 @@ export const createRemediationBody = z.object({
   action: remediationActionSchema,
 });
 
+// --- import (operator-grain ytdl-sub subscriptions.yaml takeover, D-19 M2) --------------------
+
+export const importYtdlSubBody = z.object({
+  /** the raw ytdl-sub subscriptions.yaml text (the estate's shape). */
+  subscriptionsYaml: z.string().min(1),
+  /** the target video Library everything non-music imports into. */
+  videoLibraryId: z.string().min(1),
+  /** the target music Library the `= Music` channels import into (required if any are present). */
+  musicLibraryId: z.string().optional(),
+  /** the chip that classifies music (default `Music`). */
+  musicChip: z.string().optional(),
+  /** also set the video Library's emitPolicy from the parsed `__preset__` (default false). */
+  applyPreset: z.boolean().optional(),
+});
+
+export const importSummaryDto = z.object({
+  channels: z.number(),
+  video: z.number(),
+  music: z.number(),
+  created: z.number(),
+  updated: z.number(),
+  unchanged: z.number(),
+  presetApplied: z.boolean(),
+  presetNames: z.array(z.string()),
+  sources: z.array(
+    z.object({
+      ref: z.string(),
+      mediaKind: mediaKindSchema,
+      libraryId: z.string(),
+      action: z.enum(['created', 'updated', 'unchanged']),
+    }),
+  ),
+});
+
 export const idParam = z.object({ id: z.string() });
