@@ -17,7 +17,9 @@ scraped catalog, minted bearer, bespoke season/episode mapping) implement the **
   layer stays a downstream concern. Members never touch this service's UI, exactly as they never touch
   Sonarr's.
 - **LAN-only, single API key** — no user management, no accounts, no OIDC. One `X-Api-Key` guards the
-  API; per-user identity/grants/caps/audit live in the calling application.
+  API; per-user identity/grants/caps/audit live in the calling application. Two gate modes
+  (`AUTH_MODE`): `api-key` (default — a key is required) or `open` (no key required for any request,
+  the way Sonarr runs "Authentication: Disabled for Local Addresses" behind a LAN-only ingress).
 
 ## Architecture (design of record)
 
@@ -89,7 +91,9 @@ renders comes from the same endpoints any caller uses, and every page links its 
 
 Auth is the same single `X-Api-Key` (no user management): the static shell is served openly (it
 carries no data), the console asks for the key once and keeps it in `localStorage` (the service is
-LAN-only by design), and any 401 drops back to key entry.
+LAN-only by design), and any 401 drops back to key entry. On an `open` (keyless) deployment the
+console probes the API without a key on boot and, when it answers, skips the key screen entirely —
+straight to Sources, exactly like opening Sonarr on the LAN.
 
 Console dev loop: `pnpm build:console` rebuilds the assets; `pnpm dev:demo` boots the API over an
 embedded Postgres with a small seeded dataset on http://localhost:3222 (key `demo-key`).
@@ -123,14 +127,15 @@ pnpm start
 
 ### Configuration
 
-| Env var                  | Required      | Purpose                                                                                |
-| ------------------------ | ------------- | -------------------------------------------------------------------------------------- |
-| `YTDRIVARR_API_KEYS`     | yes           | Comma-separated API keys (`X-Api-Key`). No keys ⇒ the API is locked (deny-by-default). |
-| `DATABASE_URL`           | yes (runtime) | PostgreSQL 16 connection string.                                                       |
-| `PROJECTION_ROOT`        | no            | Base directory a Library's relative `projectionPath` resolves under.                   |
-| `PORT`                   | no            | HTTP port (default `8080`).                                                            |
-| `LOG_LEVEL`              | no            | pino level (default `info`).                                                           |
-| `YTDRIVARR_SKIP_MIGRATE` | no            | Skip on-boot migrations (`1`/`true`). Migrations otherwise run idempotently on start.  |
+| Env var                  | Required      | Purpose                                                                                                                              |
+| ------------------------ | ------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `YTDRIVARR_API_KEYS`     | yes\*         | Comma-separated API keys (`X-Api-Key`). In `api-key` mode, no keys ⇒ the API is locked (deny-by-default). \*Optional in `open` mode. |
+| `AUTH_MODE`              | no            | `api-key` (default — a key is required) or `open` (no key required for any request; LAN-only).                                       |
+| `DATABASE_URL`           | yes (runtime) | PostgreSQL 16 connection string.                                                                                                     |
+| `PROJECTION_ROOT`        | no            | Base directory a Library's relative `projectionPath` resolves under.                                                                 |
+| `PORT`                   | no            | HTTP port (default `8080`).                                                                                                          |
+| `LOG_LEVEL`              | no            | pino level (default `info`).                                                                                                         |
+| `YTDRIVARR_SKIP_MIGRATE` | no            | Skip on-boot migrations (`1`/`true`). Migrations otherwise run idempotently on start.                                                |
 
 ## API summary
 
@@ -147,7 +152,9 @@ Every request/response is validated with zod; the OpenAPI 3.1 document is genera
 - `GET|POST /api/v1/runs` (POST triggers a discovery run + projection), `GET /api/v1/runs/{id}`
 - `GET|POST /api/v1/remediation`, `GET /api/v1/remediation/{id}`
 
-Everything under `/api/v1` requires `X-Api-Key`.
+Everything under `/api/v1` requires `X-Api-Key` in the default `api-key` mode. With `AUTH_MODE=open`
+no key is required for any request (a presented key is still accepted, never rejected), so keyed
+clients keep working unchanged.
 
 ## Status
 

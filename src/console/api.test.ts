@@ -1,6 +1,15 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { api, ApiError, clearApiKey, getApiKey, setApiKey, UNAUTHORIZED_EVENT } from './api';
+import {
+  api,
+  ApiError,
+  chooseInitialScreen,
+  clearApiKey,
+  getApiKey,
+  isOpenDeployment,
+  setApiKey,
+  UNAUTHORIZED_EVENT,
+} from './api';
 
 /**
  * The console's single data path (D-21): every request carries X-Api-Key; a 401 clears the stored
@@ -60,5 +69,50 @@ describe('api()', () => {
     expect((err as ApiError).message).toBe('request body failed validation');
     expect((err as ApiError).details).toEqual([{ path: ['ref'] }]);
     expect(getApiKey()).toBe('secret-key'); // only a 401 clears the key
+  });
+});
+
+/**
+ * Gate-skip on boot (owner ruling 2026-07-20): probe a guarded route WITHOUT a key. A 200 means an
+ * open (keyless, LAN-only) deployment — go straight to the shell, no key screen.
+ */
+describe('isOpenDeployment()', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('returns true when the unauthenticated probe answers 200 — and sends NO key', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, []));
+    vi.stubGlobal('fetch', fetchMock);
+
+    expect(await isOpenDeployment()).toBe(true);
+    // Probed the guarded route with no init/headers at all — never depends on stored key state.
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/providers');
+    expect(fetchMock.mock.calls[0]?.[1]).toBeUndefined();
+  });
+
+  it('returns false when the probe is rejected (api-key deployment, 401)', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(401, { error: 'unauthorized' })));
+    expect(await isOpenDeployment()).toBe(false);
+  });
+
+  it('returns false on a network error (fail closed to the key screen)', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')));
+    expect(await isOpenDeployment()).toBe(false);
+  });
+});
+
+describe('chooseInitialScreen()', () => {
+  it('skips straight to the shell on an open deployment (no key needed)', () => {
+    expect(chooseInitialScreen({ open: true, hasStoredKey: false })).toBe('shell');
+    expect(chooseInitialScreen({ open: true, hasStoredKey: true })).toBe('shell');
+  });
+
+  it('shows the shell when a key is already stored (api-key deployment)', () => {
+    expect(chooseInitialScreen({ open: false, hasStoredKey: true })).toBe('shell');
+  });
+
+  it('asks for a key only on a gated deployment with nothing stored', () => {
+    expect(chooseInitialScreen({ open: false, hasStoredKey: false })).toBe('key');
   });
 });

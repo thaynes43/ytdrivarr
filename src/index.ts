@@ -23,6 +23,7 @@ async function main(): Promise<void> {
 
   const appOptions: CreateAppOptions = {
     apiKeys: config.apiKeys,
+    authMode: config.authMode,
     ...(config.projectionRoot !== undefined ? { projectionRoot: config.projectionRoot } : {}),
     ...(config.credentialRoot !== undefined ? { credentialRoot: config.credentialRoot } : {}),
     jobHeartbeatExpirySec: config.jobHeartbeatExpirySec,

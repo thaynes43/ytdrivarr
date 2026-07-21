@@ -1,5 +1,13 @@
 import './styles.css';
-import { clearApiKey, getApiKey, setApiKey, UNAUTHORIZED_EVENT, verifyKey } from './api';
+import {
+  chooseInitialScreen,
+  clearApiKey,
+  getApiKey,
+  isOpenDeployment,
+  setApiKey,
+  UNAUTHORIZED_EVENT,
+  verifyKey,
+} from './api';
 import { el, errorBanner } from './dom';
 import { renderSources } from './views/sources';
 import { renderLibraries } from './views/libraries';
@@ -200,8 +208,24 @@ window.addEventListener(UNAUTHORIZED_EVENT, () => {
   renderKeyScreen('the API rejected the stored key — enter it again');
 });
 
-if (getApiKey() !== null) {
-  renderShell();
-} else {
-  renderKeyScreen();
+async function boot(): Promise<void> {
+  // Sonarr's "Disabled for Local Addresses" experience (owner ruling 2026-07-20): on a keyless
+  // (open) LAN deployment the API answers unauthenticated, so skip the key gate entirely and go
+  // straight to Sources. A stale localStorage key is irrelevant in open mode (the server ignores
+  // it) — clear it here so it can never wedge the flow or a later api-key flip.
+  let open = false;
+  try {
+    open = await isOpenDeployment();
+  } catch {
+    open = false;
+  }
+  if (open) clearApiKey();
+
+  if (chooseInitialScreen({ open, hasStoredKey: getApiKey() !== null }) === 'shell') {
+    renderShell();
+  } else {
+    renderKeyScreen();
+  }
 }
+
+void boot();

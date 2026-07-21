@@ -81,3 +81,26 @@ export async function verifyKey(key: string): Promise<boolean> {
   const res = await fetch('/api/v1/providers', { headers: { 'x-api-key': key } });
   return res.ok;
 }
+
+/**
+ * Detect a keyless (`open`) LAN deployment by probing a guarded route WITHOUT a key. If it answers
+ * 200 the gate is open and the console can skip key entry entirely — Sonarr's "Disabled for Local
+ * Addresses" experience (owner ruling 2026-07-20). Any non-200 (typically 401) or a network error
+ * means the deployment still wants a key. Sends no `X-Api-Key`, so it never depends on stored state.
+ */
+export async function isOpenDeployment(): Promise<boolean> {
+  try {
+    const res = await fetch('/api/v1/providers');
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The initial screen: skip the key gate whenever the deployment is open (no key needed) or a key is
+ * already stored; otherwise ask for a key. Pure, so the boot decision is unit-testable in isolation.
+ */
+export function chooseInitialScreen(o: { open: boolean; hasStoredKey: boolean }): 'shell' | 'key' {
+  return o.open || o.hasStoredKey ? 'shell' : 'key';
+}
