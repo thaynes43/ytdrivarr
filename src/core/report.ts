@@ -17,6 +17,7 @@ import {
   dropTitleCollisions,
   preservePublishedNumbering,
 } from './dedup';
+import { applyEmitWindow, DEFAULT_EMIT_WINDOW_DAYS, type EntryWindowMeta } from './emit-window';
 import { emitLibrary } from './emitter';
 import { projectLibrary, resolveProjectionDir } from './projection';
 import { getLibrary } from '../domain/libraries';
@@ -57,6 +58,9 @@ export interface ReportJobInput {
   result: ReportResultBody;
   projectionRoot?: string;
   credentialRoot?: string;
+  /** D-14 — the donor-parity emit window (days) for entry-grain providers; 0 = unbounded. Defaults
+   * to `DEFAULT_EMIT_WINDOW_DAYS` when unset so the window is ON even if a caller forgets to thread it. */
+  emitWindowDays?: number;
   db?: DbClient;
 }
 
@@ -137,15 +141,27 @@ export async function reportJob(input: ReportJobInput): Promise<ReportJobOutcome
     }
   }
 
-  // 4) recompose the whole library from ALL persisted entries + atomically project.
+  // 4) recompose the whole library from ALL persisted entries, apply the donor-parity emit window
+  //    (entry-grain providers only — stale classes drop from the FILE, their ledger rows + immutable
+  //    numbering stay), and atomically project. The window map carries each row's first-seen
+  //    (createdAt) + whether its provider opts in, built where the source's provider is known.
+  const emitWindowDays = input.emitWindowDays ?? DEFAULT_EMIT_WINDOW_DAYS;
   const sources = await listSourcesForLibrary(libraryId, d);
   const libraryEntries: SubscriptionEntry[] = [];
+  const windowMeta = new Map<string, EntryWindowMeta>();
   for (const source of sources) {
     if (!source.enabled) continue;
+    const windowed = getProvider(source.providerId).emitWindow === true;
     const rows = await listEntriesForSource(source.id, d);
-    for (const row of rows) libraryEntries.push(rowToEntry(row));
+    for (const row of rows) {
+      libraryEntries.push(rowToEntry(row));
+      if (!windowMeta.has(row.entryKey)) {
+        windowMeta.set(row.entryKey, { firstSeenAt: row.createdAt, windowed });
+      }
+    }
   }
   const deduped = dedupTitleCollisions(dedupEntries(libraryEntries));
+  const windowed = applyEmitWindow(deduped, windowMeta, emitWindowDays);
   const emitted = emitLibrary(
     {
       presetName: library.presetName,
@@ -153,7 +169,7 @@ export async function reportJob(input: ReportJobInput): Promise<ReportJobOutcome
       emitPolicy: library.emitPolicy,
       libraryKind: library.libraryKind,
     },
-    deduped,
+    windowed.emitted,
   );
   const dir = resolveProjectionDir(library.projectionPath, input.projectionRoot);
   await projectLibrary(dir, emitted);
@@ -166,7 +182,8 @@ export async function reportJob(input: ReportJobInput): Promise<ReportJobOutcome
     updated: merged.updated,
     deduped: libraryEntries.length - deduped.length,
     titleCollisions: titleGuard.dropped,
-    emitted: deduped.length,
+    windowedOut: windowed.dropped,
+    emitted: windowed.emitted.length,
     entries: merged.total,
   };
   const provider = getProvider(job.providerId);

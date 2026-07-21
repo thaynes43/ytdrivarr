@@ -4,6 +4,7 @@ import { dispatchDiscovery } from './dispatcher';
 import { buildDiscoveryPayload, enqueueDiscoveryJob } from './jobs';
 import { createStateStore } from './state-store';
 import { dedupEntries, dedupTitleCollisions, preservePublishedNumbering } from './dedup';
+import { applyEmitWindow, DEFAULT_EMIT_WINDOW_DAYS, type EntryWindowMeta } from './emit-window';
 import { emitLibrary } from './emitter';
 import { projectLibrary, resolveProjectionDir } from './projection';
 import { buildRunSummary, runSummaryToJson } from '../domain/run-summary';
@@ -44,6 +45,9 @@ export interface RunDiscoveryInput {
   scopeRef?: string;
   trigger?: RunTrigger;
   projectionRoot?: string;
+  /** D-14 — the donor-parity emit window (days) for entry-grain providers; 0 = unbounded. Defaults
+   * to `DEFAULT_EMIT_WINDOW_DAYS` when unset so the window is ON even if a caller forgets to thread it. */
+  emitWindowDays?: number;
   db?: DbClient;
 }
 
@@ -124,11 +128,13 @@ export async function runDiscovery(input: RunDiscoveryInput): Promise<DiscoveryO
     trigger: input.trigger ?? 'api',
     ...(input.db !== undefined ? { db: input.db } : {}),
   });
+  const emitWindowDays = input.emitWindowDays ?? DEFAULT_EMIT_WINDOW_DAYS;
   const counts = {
     libraries: 0,
     sources: 0,
     discovered: 0,
     deduped: 0,
+    windowedOut: 0,
     emitted: 0,
     queued: 0,
   };
@@ -174,15 +180,26 @@ export async function runDiscovery(input: RunDiscoveryInput): Promise<DiscoveryO
       }
 
       // 2) Recompose the WHOLE library from all persisted entries (a per-source run must not wipe
-      //    its siblings), dedup cross-source, emit, and atomically project.
+      //    its siblings), dedup cross-source, apply the donor-parity emit window (entry-grain
+      //    providers only), and atomically project. The window map carries each row's first-seen
+      //    (createdAt) + whether its provider opts in — built here where the source's provider is known.
       const libraryEntries: SubscriptionEntry[] = [];
+      const windowMeta = new Map<string, EntryWindowMeta>();
       for (const source of sources) {
         if (!source.enabled) continue;
+        const windowed = getProvider(source.providerId).emitWindow === true;
         const rows = await listEntriesForSource(source.id, input.db);
-        for (const row of rows) libraryEntries.push(rowToEntry(row));
+        for (const row of rows) {
+          libraryEntries.push(rowToEntry(row));
+          if (!windowMeta.has(row.entryKey)) {
+            windowMeta.set(row.entryKey, { firstSeenAt: row.createdAt, windowed });
+          }
+        }
       }
       const deduped = dedupTitleCollisions(dedupEntries(libraryEntries));
       counts.deduped += libraryEntries.length - deduped.length;
+      const windowed = applyEmitWindow(deduped, windowMeta, emitWindowDays);
+      counts.windowedOut += windowed.dropped;
 
       const emitted = emitLibrary(
         {
@@ -191,11 +208,11 @@ export async function runDiscovery(input: RunDiscoveryInput): Promise<DiscoveryO
           emitPolicy: library.emitPolicy,
           libraryKind: library.libraryKind,
         },
-        deduped,
+        windowed.emitted,
       );
       const dir = resolveProjectionDir(library.projectionPath, input.projectionRoot);
       await projectLibrary(dir, emitted);
-      counts.emitted += deduped.length;
+      counts.emitted += windowed.emitted.length;
       projected.push({ libraryId: library.id, dir });
     }
 

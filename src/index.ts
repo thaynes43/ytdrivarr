@@ -28,6 +28,7 @@ async function main(): Promise<void> {
     ...(config.credentialRoot !== undefined ? { credentialRoot: config.credentialRoot } : {}),
     jobHeartbeatExpirySec: config.jobHeartbeatExpirySec,
     jobMaxAttempts: config.jobMaxAttempts,
+    emitWindowDays: config.emitWindowDays,
   };
   const app = createApp(appOptions);
 
@@ -40,6 +41,7 @@ async function main(): Promise<void> {
         scope: 'all',
         trigger: 'cron',
         ...(config.projectionRoot !== undefined ? { projectionRoot: config.projectionRoot } : {}),
+        emitWindowDays: config.emitWindowDays,
       });
     });
   }

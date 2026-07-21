@@ -32,6 +32,14 @@ export interface SourceProvider {
   readonly capabilities: readonly Capability[];
   /** which media-kind preset families this provider can produce entries for (D-12). */
   readonly mediaKinds: readonly MediaKind[];
+  /**
+   * C3 — opt into the donor-parity EMIT WINDOW (D-14 / `core/emit-window.ts`). Entry-grain providers
+   * (Peloton) whose ledger grows one row per class set this `true`: entries first-seen outside
+   * `PELOTON_EMIT_WINDOW_DAYS` drop OUT of the emitted `subscriptions.yaml` (the ledger row + its
+   * immutable numbering stay). Preset-driven URL providers (YouTube) leave it unset/false — ytdl-sub's
+   * own "Only Recent" bounds them at download time, so their whole source list always emits.
+   */
+  readonly emitWindow?: boolean;
   readonly settingsSchema: z.ZodType;
   /** C4 — the discovery cadence declaration. */
   readonly scheduling: SchedulingDeclaration;
