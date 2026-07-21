@@ -1,5 +1,6 @@
 import { pgTable, uuid, text, jsonb, integer, timestamp, index } from 'drizzle-orm/pg-core';
 import { jobKindEnum, jobStatusEnum } from './enums';
+import { runs } from './runs';
 
 /**
  * The out-of-process transport job table (DESIGN-045 D-03) — the SEAM ONLY. When an
@@ -14,6 +15,9 @@ export const jobs = pgTable(
     id: uuid('id').defaultRandom().primaryKey(),
     kind: jobKindEnum('kind').notNull(),
     providerId: text('provider_id').notNull(),
+    /** the discovery/remediation Run this job finalizes (M3) — nullable for the M1 enqueue seam and
+     * for jobs never tied to a Run. The worker's report/fail path finalizes this Run (D-03/D-10). */
+    runId: uuid('run_id').references(() => runs.id, { onDelete: 'set null' }),
     payload: jsonb('payload').$type<Record<string, unknown>>().notNull().default({}),
     status: jobStatusEnum('status').notNull().default('queued'),
     // --- claim / heartbeat protocol (the transport seam) ---

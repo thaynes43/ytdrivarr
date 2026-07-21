@@ -19,6 +19,10 @@ export const libraries = pgTable('libraries', {
   presetName: text('preset_name').notNull(),
   /** the downloader-mounted path this Library's config is atomically projected to (D-14). */
   projectionPath: text('projection_path').notNull(),
+  /** the downloader-reachable dir a provider's session artifacts (bearer.txt / cookies.txt) are
+   * atomically written to (C2 / D-05). Null → falls back to `mediaRoot` (the estate's live
+   * `/media/peloton` location); resolved under PROJECTION_ROOT-like env when relative (tests). */
+  credentialPath: text('credential_path'),
   /** ytdl-sub `configuration.working_directory` for the emitted config.yaml. */
   workingDirectory: text('working_directory').notNull().default('/workdir/'),
   /** the `__preset__` block (overrides/throttle/ytdl_options/output_options) rendered verbatim. */
