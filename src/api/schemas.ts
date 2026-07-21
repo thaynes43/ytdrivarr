@@ -18,6 +18,7 @@ export const libraryDto = z.object({
   presetName: z.string(),
   projectionPath: z.string(),
   workingDirectory: z.string(),
+  credentialPath: z.string().nullable(),
   emitPolicy: jsonObject,
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -138,6 +139,7 @@ export const createLibraryBody = z.object({
   presetName: z.string().optional(),
   projectionPath: z.string().min(1),
   workingDirectory: z.string().optional(),
+  credentialPath: z.string().optional(),
   emitPolicy: jsonObject.optional(),
 });
 

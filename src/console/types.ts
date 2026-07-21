@@ -16,6 +16,7 @@ export interface LibraryDto {
   presetName: string;
   projectionPath: string;
   workingDirectory: string;
+  credentialPath: string | null;
   emitPolicy: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;

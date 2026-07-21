@@ -13,6 +13,7 @@ export function toLibraryDto(row: Library): LibraryDto {
     presetName: row.presetName,
     projectionPath: row.projectionPath,
     workingDirectory: row.workingDirectory,
+    credentialPath: row.credentialPath,
     emitPolicy: row.emitPolicy,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
