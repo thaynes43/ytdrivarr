@@ -14,6 +14,8 @@ import {
   entryListDto,
   healthDto,
   idParam,
+  importSummaryDto,
+  importYtdlSubBody,
   libraryDto,
   okDto,
   providerDto,
@@ -43,6 +45,7 @@ import {
   updateSource,
 } from '../domain/sources';
 import { listEntriesForSource } from '../domain/entries';
+import { parseSubscriptionsYaml, applyYtdlSubImport } from '../core/import-ytdl-sub';
 import { getRun, listRuns } from '../domain/runs';
 import {
   createRemediationJob,
@@ -331,6 +334,47 @@ function buildRoutes(opts: CreateAppOptions): RouteDef[] {
       handler: async (c) => {
         await deleteSource({ id: reqParam(c, 'id'), apiKeyId: apiKeyLabel(c) });
         return json(c, okDto, { ok: true });
+      },
+    },
+
+    // --- import (ytdl-sub subscriptions.yaml takeover, D-19 M2) -------------------------------
+    {
+      method: 'post',
+      path: '/api/v1/import/ytdl-sub',
+      summary:
+        'Import an existing ytdl-sub subscriptions.yaml into Sources — idempotent, media-kind aware',
+      tags: ['import'],
+      auth: true,
+      request: { body: importYtdlSubBody },
+      response: importSummaryDto,
+      handler: async (c) => {
+        const body = await parseBody(c, importYtdlSubBody);
+        await requireLibrary(body.videoLibraryId);
+        const parsed = parseSubscriptionsYaml(
+          body.subscriptionsYaml,
+          body.musicChip !== undefined ? { musicChip: body.musicChip } : {},
+        );
+        const hasMusic = parsed.channels.some((ch) => ch.mediaKind === 'music');
+        if (hasMusic) {
+          if (!body.musicLibraryId) {
+            throw new ValidationError(
+              'the file contains music channels but no musicLibraryId was provided',
+            );
+          }
+          await requireLibrary(body.musicLibraryId);
+        }
+        const summary = await applyYtdlSubImport(
+          parsed,
+          {
+            videoLibraryId: body.videoLibraryId,
+            ...(body.musicLibraryId !== undefined ? { musicLibraryId: body.musicLibraryId } : {}),
+          },
+          {
+            apiKeyId: apiKeyLabel(c),
+            ...(body.applyPreset !== undefined ? { applyPreset: body.applyPreset } : {}),
+          },
+        );
+        return json(c, importSummaryDto, { ...summary, presetNames: parsed.presetNames }, 201);
       },
     },
 

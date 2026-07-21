@@ -65,7 +65,9 @@ export async function createSource(input: CreateSourceInput): Promise<Source> {
 
 export interface UpdateSourceInput {
   id: string;
-  patch: Partial<Pick<Source, 'displayName' | 'ref' | 'settings' | 'mediaKind' | 'capsContext'>>;
+  patch: Partial<
+    Pick<Source, 'displayName' | 'ref' | 'settings' | 'mediaKind' | 'capsContext' | 'libraryId'>
+  >;
   apiKeyId?: string;
   db?: DbClient;
 }

@@ -143,6 +143,7 @@ Every request/response is validated with zod; the OpenAPI 3.1 document is genera
 - `GET  /api/v1/providers` — registered providers and their declared capabilities.
 - `GET|POST /api/v1/libraries`, `GET|PATCH|DELETE /api/v1/libraries/{id}`
 - `GET|POST /api/v1/sources`, `GET|PATCH|DELETE /api/v1/sources/{id}`, `GET /api/v1/sources/{id}/entries`
+- `POST /api/v1/import/ytdl-sub` — idempotent, media-kind-aware import of an existing ytdl-sub `subscriptions.yaml` into Sources
 - `GET|POST /api/v1/runs` (POST triggers a discovery run + projection), `GET /api/v1/runs/{id}`
 - `GET|POST /api/v1/remediation`, `GET /api/v1/remediation/{id}`
 
@@ -150,15 +151,22 @@ Everything under `/api/v1` requires `X-Api-Key`.
 
 ## Status
 
-**M1 — the walking skeleton + provider contracts.** The core (REST API, DB + migrations, typed
-provider registry, job-dispatch seam, scheduler seam, emitter + atomic projection), the C1–C8
-contracts, and a trivial `in_core` URL-list provider proven end to end (create a library + sources →
-discovery run → entries → rendered YAML → atomic projection). Every Source and Library carries a
-`mediaKind`/`libraryKind`, and the renderer supports both the `video` and `music` preset families
-structurally. The M1 operator-console shell (sources / libraries / runs / health / providers) ships
-with the service. Later milestones bring the real YouTube provider (with first-class music), the
-out-of-process authenticated-scraper (Peloton) worker with per-provider console settings + `test()`
-buttons, member edit surfaces, and per-item Fix.
+**M2 — the YouTube YAML takeover + first-class music.** The real `in_core` `youtube` provider
+supports BOTH preset families from one provider — `mediaKind: video` → `{player} TV Show by Date`
+under `= Genre` chips, `mediaKind: music` → the `YouTube Releases` music family (audio, its own
+Library) — with channel/playlist ref validation as the `test()` probe and stateless remediation
+declared (C6). An idempotent, media-kind-aware **import** (`POST /api/v1/import/ytdl-sub` or
+`scripts/import-subscriptions.ts`) parses an existing ytdl-sub `subscriptions.yaml` into Sources: the
+`= Music` chip channels become music Sources, everything else video, re-import updates in place and
+never duplicates. Two Libraries (a video library + a music library) render and project their own
+family atomically to their own `projectionPath`, and the emitter output matches the estate's live
+YAML by shape. The cutover runbook is `docs/cutover-m2.md`.
+
+Earlier: **M1** stood up the core (REST API, DB + migrations, typed provider registry, job-dispatch
+seam, scheduler seam, emitter + atomic projection), the C1–C8 contracts, the trivial `in_core`
+reference provider, and the operator-console shell. Later milestones bring the out-of-process
+authenticated-scraper (Peloton) worker with per-provider console settings + `test()` buttons, member
+edit surfaces, and per-item Fix.
 
 ## License
 

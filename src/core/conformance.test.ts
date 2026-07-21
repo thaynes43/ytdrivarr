@@ -6,15 +6,17 @@ import {
   type SourceProvider,
 } from '../contracts';
 import { inCoreUrlListProvider } from '../providers/in-core-url-list';
+import { youtubeProvider } from '../providers/youtube';
 import { fakeFullProvider } from '../testing/fake-full-provider';
 import { fakeContext } from '../testing/context';
 
 /**
- * Provider-contract CONFORMANCE (the DESIGN-045 test strategy): a trivial and a full provider must
- * BOTH satisfy C1–C8 against the same interface. Running the identical suite over both is the seam's
- * compatibility promise.
+ * Provider-contract CONFORMANCE (the DESIGN-045 test strategy): trivial, real, and full providers
+ * must ALL satisfy C1–C8 against the same interface. Running the identical suite over all three is
+ * the seam's compatibility promise — the M2 `youtube` provider (real, mid-spread) sits between the
+ * trivial `[]`-capability reference and the full authenticated-scraper stub.
  */
-const providers: SourceProvider[] = [inCoreUrlListProvider, fakeFullProvider];
+const providers: SourceProvider[] = [inCoreUrlListProvider, youtubeProvider, fakeFullProvider];
 
 describe.each(providers)('conformance: $id', (provider) => {
   it('passes registry validation (C1)', () => {
