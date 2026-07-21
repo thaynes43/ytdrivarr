@@ -1,3 +1,0 @@
-[console_scripts]
-ytdrivarr-peloton-validate = ytdrivarr_peloton_worker.validate:main
-ytdrivarr-peloton-worker = ytdrivarr_peloton_worker.__main__:main

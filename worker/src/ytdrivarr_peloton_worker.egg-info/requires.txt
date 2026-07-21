@@ -1,8 +1,0 @@
-selenium<5,>=4.15
-requests>=2.31
-PyYAML>=6.0
-
-[dev]
-pytest>=7.4
-responses>=0.24
-ruff>=0.4
