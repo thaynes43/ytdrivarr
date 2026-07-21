@@ -13,6 +13,13 @@ const envSchema = z.object({
   /** D-14 — the base of the downloader-mounted projection volume (per-Library projectionPath is
    * resolved under this root when relative). */
   PROJECTION_ROOT: z.string().optional(),
+  /** D-05 — the base a Library's (relative) credentialPath resolves under for session artifacts
+   * (bearer.txt / cookies.txt). Falls back to PROJECTION_ROOT, then cwd (tests). */
+  CREDENTIAL_ROOT: z.string().optional(),
+  /** D-03 — a claimed/running job is reclaimable once its heartbeat is older than this SLA. */
+  JOB_HEARTBEAT_EXPIRY_SEC: z.coerce.number().int().positive().default(120),
+  /** D-03 — the retry ceiling: a retryable fail past this many attempts finalizes the Run as error. */
+  JOB_MAX_ATTEMPTS: z.coerce.number().int().positive().default(3),
   YTDRIVARR_SKIP_MIGRATE: z.string().optional(),
 });
 
@@ -22,6 +29,9 @@ export interface AppConfig {
   port: number;
   logLevel: string;
   projectionRoot: string | undefined;
+  credentialRoot: string | undefined;
+  jobHeartbeatExpirySec: number;
+  jobMaxAttempts: number;
   skipMigrate: boolean;
 }
 
@@ -40,6 +50,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     port: parsed.PORT,
     logLevel: parsed.LOG_LEVEL,
     projectionRoot: parsed.PROJECTION_ROOT,
+    credentialRoot: parsed.CREDENTIAL_ROOT,
+    jobHeartbeatExpirySec: parsed.JOB_HEARTBEAT_EXPIRY_SEC,
+    jobMaxAttempts: parsed.JOB_MAX_ATTEMPTS,
     skipMigrate: truthy(parsed.YTDRIVARR_SKIP_MIGRATE),
   };
 }

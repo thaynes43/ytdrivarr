@@ -1,18 +1,23 @@
 import { Hono, type Context } from 'hono';
 import { z } from 'zod';
 import { logger } from '../logger';
-import { AuthError, NotFoundError, ValidationError } from '../errors';
+import { AuthError, ConflictError, NotFoundError, ValidationError } from '../errors';
 import { apiKeyAuth, apiKeyLabel } from './auth';
 import { buildOpenApiDocument, type OpenApiRoute } from './openapi';
 import { registerConsole } from './console';
 import {
   createLibraryBody,
+  claimJobBody,
+  claimJobResponse,
   createRemediationBody,
   createRunBody,
   createSourceBody,
   discoveryOutcomeDto,
   entryListDto,
+  failJobBody,
+  failJobResponse,
   healthDto,
+  heartbeatJobBody,
   idParam,
   importSummaryDto,
   importYtdlSubBody,
@@ -20,6 +25,8 @@ import {
   okDto,
   providerDto,
   remediationJobDto,
+  reportJobBody,
+  reportJobResponse,
   runDto,
   sourceDto,
   updateLibraryBody,
@@ -46,6 +53,8 @@ import {
 } from '../domain/sources';
 import { listEntriesForSource } from '../domain/entries';
 import { parseSubscriptionsYaml, applyYtdlSubImport } from '../core/import-ytdl-sub';
+import { claimJob, failJob, heartbeatJob } from '../core/jobs';
+import { reportJob } from '../core/report';
 import { getRun, listRuns } from '../domain/runs';
 import {
   createRemediationJob,
@@ -60,6 +69,11 @@ interface RouteDef extends OpenApiRoute {
 export interface CreateAppOptions {
   apiKeys: readonly string[];
   projectionRoot?: string;
+  /** D-05 — base for a Library's relative credentialPath (bearer.txt / cookies.txt delivery). */
+  credentialRoot?: string;
+  /** D-03 — reclaim SLA + retry ceiling for the out-of-process transport. */
+  jobHeartbeatExpirySec?: number;
+  jobMaxAttempts?: number;
   /** Where the built operator-console assets live (tests override; prod/dev auto-resolve). */
   consoleDir?: string;
 }
@@ -475,6 +489,85 @@ function buildRoutes(opts: CreateAppOptions): RouteDef[] {
           toRemediationJobDto(await requireRemediationJob(reqParam(c, 'id'))),
         ),
     },
+
+    // --- out-of-process transport (D-03) — the Python worker's HTTP contract -------------------
+    {
+      method: 'post',
+      path: '/api/v1/jobs/claim',
+      summary: 'Claim the oldest queued/reclaimable job (FOR UPDATE SKIP LOCKED, D-03)',
+      tags: ['jobs'],
+      auth: true,
+      request: { body: claimJobBody },
+      response: claimJobResponse,
+      handler: async (c) => {
+        const body = await parseBody(c, claimJobBody);
+        const job = await claimJob({
+          worker: body.worker,
+          ...(body.kinds !== undefined ? { kinds: body.kinds } : {}),
+          ...(body.providerId !== undefined ? { providerId: body.providerId } : {}),
+          ...(opts.jobHeartbeatExpirySec !== undefined
+            ? { heartbeatExpirySec: opts.jobHeartbeatExpirySec }
+            : {}),
+        });
+        return json(c, claimJobResponse, { job });
+      },
+    },
+    {
+      method: 'post',
+      path: '/api/v1/jobs/:id/heartbeat',
+      summary: 'Refresh a claimed job heartbeat + flip claimed→running (409 if reclaimed, D-03)',
+      tags: ['jobs'],
+      auth: true,
+      request: { params: idParam, body: heartbeatJobBody },
+      response: okDto,
+      handler: async (c) => {
+        const body = await parseBody(c, heartbeatJobBody);
+        const res = await heartbeatJob({ id: reqParam(c, 'id'), worker: body.worker });
+        return json(c, okDto, res);
+      },
+    },
+    {
+      method: 'post',
+      path: '/api/v1/jobs/:id/report',
+      summary:
+        'Report scraped entries + session + telemetry; core merges, delivers, emits, finalizes',
+      tags: ['jobs'],
+      auth: true,
+      request: { params: idParam, body: reportJobBody },
+      response: reportJobResponse,
+      handler: async (c) => {
+        const body = await parseBody(c, reportJobBody);
+        const outcome = await reportJob({
+          id: reqParam(c, 'id'),
+          worker: body.worker,
+          result: body.result,
+          ...(opts.projectionRoot !== undefined ? { projectionRoot: opts.projectionRoot } : {}),
+          ...(opts.credentialRoot !== undefined ? { credentialRoot: opts.credentialRoot } : {}),
+        });
+        return json(c, reportJobResponse, outcome);
+      },
+    },
+    {
+      method: 'post',
+      path: '/api/v1/jobs/:id/fail',
+      summary: 'Report a job failure (retryable → requeue + alarm; else finalize Run error, D-03)',
+      tags: ['jobs'],
+      auth: true,
+      request: { params: idParam, body: failJobBody },
+      response: failJobResponse,
+      handler: async (c) => {
+        const body = await parseBody(c, failJobBody);
+        const res = await failJob({
+          id: reqParam(c, 'id'),
+          worker: body.worker,
+          error: body.error,
+          retryable: body.retryable,
+          ...(body.alarm !== undefined ? { alarm: body.alarm } : {}),
+          ...(opts.jobMaxAttempts !== undefined ? { maxAttempts: opts.jobMaxAttempts } : {}),
+        });
+        return json(c, failJobResponse, res);
+      },
+    },
   ];
 }
 
@@ -508,6 +601,7 @@ export function createApp(opts: CreateAppOptions): Hono {
       return c.json({ error: err.message, details: err.details }, 400);
     }
     if (err instanceof AuthError) return c.json({ error: err.message }, 401);
+    if (err instanceof ConflictError) return c.json({ error: err.message }, 409);
     if (err instanceof z.ZodError)
       return c.json({ error: 'validation failed', details: err.issues }, 400);
     logger.error({ err }, 'unhandled API error');

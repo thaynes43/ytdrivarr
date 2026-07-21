@@ -16,6 +16,7 @@ export interface LibraryDto {
   presetName: string;
   projectionPath: string;
   workingDirectory: string;
+  credentialPath: string | null;
   emitPolicy: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
@@ -46,6 +47,8 @@ export interface RunDto {
   status: 'running' | 'ok' | 'warn' | 'error';
   counts: Record<string, number>;
   telemetry: Record<string, unknown>;
+  summary: Record<string, unknown> | null;
+  summaryMarkdown: string | null;
   logExcerpt: string | null;
   startedAt: string;
   finishedAt: string | null;

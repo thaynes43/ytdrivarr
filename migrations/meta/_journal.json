@@ -8,6 +8,13 @@
       "when": 1784585782504,
       "tag": "0000_bumpy_piledriver",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1784597896915,
+      "tag": "0001_bright_thunderbolt",
+      "breakpoints": true
     }
   ]
 }

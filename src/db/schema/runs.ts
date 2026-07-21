@@ -16,6 +16,9 @@ export const runs = pgTable('runs', {
   status: runStatusEnum('status').notNull().default('running'),
   counts: jsonb('counts').$type<Record<string, number>>().notNull().default({}),
   telemetry: jsonb('telemetry').$type<Record<string, unknown>>().notNull().default({}),
+  /** the owner's daily-review summary (D-10) — the structured Changes/Health/Issues object the
+   * run-summary renderer builds on finalize; nullable so an in-flight run carries none yet. */
+  summary: jsonb('summary').$type<Record<string, unknown>>(),
   logExcerpt: text('log_excerpt'),
   startedAt: timestamp('started_at', { withTimezone: true }).defaultNow().notNull(),
   finishedAt: timestamp('finished_at', { withTimezone: true }),

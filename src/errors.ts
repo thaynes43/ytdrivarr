@@ -26,3 +26,15 @@ export class AuthError extends Error {
     this.name = 'AuthError';
   }
 }
+
+/**
+ * A concurrency/ownership conflict (mapped to HTTP 409). The transport uses it when a worker acts
+ * on a job it no longer owns — i.e. the job was reclaimed after its heartbeat lapsed (D-03). The
+ * losing worker must stop; the reclaiming worker owns the job now.
+ */
+export class ConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ConflictError';
+  }
+}

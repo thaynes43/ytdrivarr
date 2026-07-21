@@ -18,6 +18,8 @@ export interface CreateLibraryInput {
   presetName?: string;
   projectionPath: string;
   workingDirectory?: string;
+  /** the session-artifact (bearer.txt/cookies.txt) dir (D-05); null → falls back to mediaRoot. */
+  credentialPath?: string;
   emitPolicy?: Record<string, unknown>;
   db?: DbClient;
 }
@@ -39,6 +41,7 @@ export async function createLibrary(input: CreateLibraryInput): Promise<Library>
       presetName: input.presetName ?? defaultPresetName(kind),
       projectionPath: input.projectionPath,
       workingDirectory: input.workingDirectory ?? '/workdir/',
+      credentialPath: input.credentialPath ?? null,
       emitPolicy: input.emitPolicy ?? {},
     })
     .returning();
@@ -58,6 +61,7 @@ export interface UpdateLibraryInput {
       | 'presetName'
       | 'projectionPath'
       | 'workingDirectory'
+      | 'credentialPath'
       | 'emitPolicy'
     >
   >;
