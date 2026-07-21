@@ -77,6 +77,10 @@ export const pelotonProvider: SourceProvider = {
   runtime: 'out_of_process',
   capabilities: ['auth', 'scrape', 'tokenMint', 'assets', 'remediation'],
   mediaKinds: ['video'],
+  // Entry-grain: the ledger grows one row per scraped class, so emission is bounded by the
+  // donor-parity sliding window (PELOTON_EMIT_WINDOW_DAYS) — stale classes drop from the file, the
+  // download-archive keeps them downloaded (core/emit-window.ts).
+  emitWindow: true,
   settingsSchema: pelotonSettingsSchema,
   // Nightly scrape (the donor's 22:00 lineage) + the 6h bearer-freshness SLA (D-07/D-15).
   scheduling: {

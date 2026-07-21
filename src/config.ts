@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { AuthMode } from './api/auth';
+import { EMIT_WINDOW_DAYS_ENV, resolveEmitWindowDays } from './core/emit-window';
 
 /**
  * Connection config = environment/secrets only (DESIGN-045 D-01). Nothing behavioral lives in
@@ -28,6 +29,13 @@ const envSchema = z.object({
   JOB_HEARTBEAT_EXPIRY_SEC: z.coerce.number().int().positive().default(120),
   /** D-03 — the retry ceiling: a retryable fail past this many attempts finalizes the Run as error. */
   JOB_MAX_ATTEMPTS: z.coerce.number().int().positive().default(3),
+  /**
+   * D-14 — the donor-parity emit window (days) for entry-grain providers (Peloton): a class
+   * first-seen outside this window drops OUT of the emitted subscriptions.yaml (the ledger row +
+   * numbering stay). Default 15 (the donor's `timeout_days`); `0` = unbounded/append-only escape
+   * hatch. Parsed leniently (see `resolveEmitWindowDays`), so it stays an optional raw string here.
+   */
+  [EMIT_WINDOW_DAYS_ENV]: z.string().optional(),
   YTDRIVARR_SKIP_MIGRATE: z.string().optional(),
 });
 
@@ -41,6 +49,8 @@ export interface AppConfig {
   credentialRoot: string | undefined;
   jobHeartbeatExpirySec: number;
   jobMaxAttempts: number;
+  /** D-14 — the donor-parity emit window (days) for entry-grain providers; 0 = unbounded. */
+  emitWindowDays: number;
   skipMigrate: boolean;
 }
 
@@ -63,6 +73,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     credentialRoot: parsed.CREDENTIAL_ROOT,
     jobHeartbeatExpirySec: parsed.JOB_HEARTBEAT_EXPIRY_SEC,
     jobMaxAttempts: parsed.JOB_MAX_ATTEMPTS,
+    emitWindowDays: resolveEmitWindowDays(parsed[EMIT_WINDOW_DAYS_ENV]),
     skipMigrate: truthy(parsed.YTDRIVARR_SKIP_MIGRATE),
   };
 }
