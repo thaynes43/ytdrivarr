@@ -1,5 +1,6 @@
 import type { Library, RemediationJob, Run, Source } from '../db/schema';
 import type { SourceProvider } from '../contracts';
+import { renderRunSummaryMarkdown, type RunSummary } from '../domain/run-summary';
 import type { LibraryDto, ProviderDto, RemediationJobDto, RunDto, SourceDto } from './schemas';
 
 export function toLibraryDto(row: Library): LibraryDto {
@@ -47,6 +48,9 @@ export function toRunDto(row: Run): RunDto {
     counts: row.counts,
     telemetry: row.telemetry,
     summary: row.summary ?? null,
+    summaryMarkdown: row.summary
+      ? renderRunSummaryMarkdown(row.summary as unknown as RunSummary)
+      : null,
     logExcerpt: row.logExcerpt,
     startedAt: row.startedAt.toISOString(),
     finishedAt: row.finishedAt ? row.finishedAt.toISOString() : null,

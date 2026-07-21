@@ -52,6 +52,8 @@ export const runDto = z.object({
   telemetry: jsonObject,
   /** the owner's Changes/Health/Issues summary object (D-10) — null until the run finalizes. */
   summary: jsonObject.nullable(),
+  /** the same summary rendered to markdown (server-side), for the console's summary expander. */
+  summaryMarkdown: z.string().nullable(),
   logExcerpt: z.string().nullable(),
   startedAt: z.string(),
   finishedAt: z.string().nullable(),

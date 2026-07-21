@@ -46,6 +46,8 @@ export interface RunDto {
   status: 'running' | 'ok' | 'warn' | 'error';
   counts: Record<string, number>;
   telemetry: Record<string, unknown>;
+  summary: Record<string, unknown> | null;
+  summaryMarkdown: string | null;
   logExcerpt: string | null;
   startedAt: string;
   finishedAt: string | null;

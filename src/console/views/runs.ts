@@ -58,12 +58,36 @@ export async function renderRuns(root: HTMLElement, refresh: () => void): Promis
       el('td', {}, formatDuration(run.startedAt, run.finishedAt)),
     );
 
-    const logCell = el('td', {});
+    // A "Detail" cell holds the summary + log expanders — both the SAME in-place expansion idiom
+    // (the doctrine's sanctioned exception): clicking toggles a sibling row open/closed, nothing
+    // reflows around it. The owner's daily-review summary (D-10) is the first expander.
+    const detailCell = el('td', {});
+    const detailRows: HTMLElement[] = [];
+
+    if (run.summaryMarkdown) {
+      const summaryRow = el('tr', { class: 'editor-row' });
+      const summaryBtn = el('button', { class: 'btn-link', type: 'button' }, 'summary');
+      summaryBtn.addEventListener('click', () => {
+        if (summaryRow.firstChild) {
+          summaryRow.replaceChildren();
+          return;
+        }
+        summaryRow.replaceChildren(
+          el(
+            'td',
+            { colspan: '7' },
+            el('pre', { class: 'log-excerpt' }, run.summaryMarkdown ?? ''),
+          ),
+        );
+      });
+      detailCell.append(summaryBtn);
+      detailRows.push(summaryRow);
+    }
+
     if (run.logExcerpt) {
       const excerptRow = el('tr', { class: 'editor-row' });
       const logBtn = el('button', { class: 'btn-link', type: 'button' }, 'log');
       logBtn.addEventListener('click', () => {
-        // a deliberate in-place expansion (the doctrine's sanctioned exception)
         if (excerptRow.firstChild) {
           excerptRow.replaceChildren();
           return;
@@ -72,13 +96,14 @@ export async function renderRuns(root: HTMLElement, refresh: () => void): Promis
           el('td', { colspan: '7' }, el('pre', { class: 'log-excerpt' }, run.logExcerpt ?? '')),
         );
       });
-      logCell.append(logBtn);
-      tbody.append(row, excerptRow);
-    } else {
-      logCell.append(el('span', { class: 'mono' }, '—'));
-      tbody.append(row);
+      if (detailCell.firstChild) detailCell.append(' · ');
+      detailCell.append(logBtn);
+      detailRows.push(excerptRow);
     }
-    row.append(logCell);
+
+    if (!detailCell.firstChild) detailCell.append(el('span', { class: 'mono' }, '—'));
+    row.append(detailCell);
+    tbody.append(row, ...detailRows);
   }
 
   root.append(
@@ -100,7 +125,7 @@ export async function renderRuns(root: HTMLElement, refresh: () => void): Promis
             el('th', {}, 'Scope'),
             el('th', {}, 'Counts'),
             el('th', {}, 'Duration'),
-            el('th', {}, 'Log'),
+            el('th', {}, 'Detail'),
           ),
         ),
         tbody,
