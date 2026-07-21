@@ -128,8 +128,10 @@ export function buildRunSummary(opts: BuildRunSummaryOptions): RunSummary {
     if (a.skipped !== undefined) activity.skipped = num(a.skipped);
     if (a.scrolls !== undefined) activity.scrolls = num(a.scrolls);
     if (a.overCap !== undefined) activity.overCap = a.overCap;
+    // Donor parity (metrics.py get_pr_summary): ✅ IFF total EXACTLY equals the cap, else ⚠️ —
+    // an over-cap activity renders ⚠️ + **OVER LIMIT**, never ✅.
     const effectiveCap = a.cap !== undefined ? num(a.cap) : cap;
-    if (effectiveCap > 0) activity.atCap = total >= effectiveCap;
+    if (effectiveCap > 0) activity.atCap = total === effectiveCap;
     return activity;
   });
 
