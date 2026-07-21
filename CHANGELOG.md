@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.0](https://github.com/thaynes43/ytdrivarr/compare/v0.4.0...v0.5.0) (2026-07-21)
+
+
+### Features
+
+* *arr-style operator console + per-activity Peloton sources (the watch grain) ([#20](https://github.com/thaynes43/ytdrivarr/issues/20)) ([9cc8c02](https://github.com/thaynes43/ytdrivarr/commit/9cc8c0244f97e90604308e16092523925e63c6db))
+* **core:** donor-parity Peloton emit window — bound subscriptions.yaml, keep the ledger ([#17](https://github.com/thaynes43/ytdrivarr/issues/17)) ([7a4a3b7](https://github.com/thaynes43/ytdrivarr/commit/7a4a3b76fa9327614f994edf6e59afd61ccdd226))
+
 ## [0.4.0](https://github.com/thaynes43/ytdrivarr/compare/v0.3.1...v0.4.0) (2026-07-21)
 
 
