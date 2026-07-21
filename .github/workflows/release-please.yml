@@ -57,3 +57,23 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - id: meta-worker
+        if: steps.release.outputs.release_created == 'true'
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/thaynes43/ytdrivarr-peloton-worker
+          tags: |
+            type=raw,value=${{ steps.release.outputs.tag_name }}
+
+      - if: steps.release.outputs.release_created == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: worker/Dockerfile
+          push: true
+          platforms: linux/amd64
+          tags: ${{ steps.meta-worker.outputs.tags }}
+          labels: ${{ steps.meta-worker.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

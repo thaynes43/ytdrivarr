@@ -5,3 +5,4 @@ pnpm-lock.yaml
 # Test fixture: a byte-faithful copy of the estate's live subscriptions.yaml — the M2 diff-gate
 # ground truth. Must NOT be reformatted or the import/emission shape tests lose their reference.
 src/testing/fixtures/estate-youtube-subscriptions.yaml
+CHANGELOG.md
