@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/thaynes43/ytdrivarr/compare/v0.3.1...v0.4.0) (2026-07-21)
+
+
+### Features
+
+* **auth:** AUTH_MODE=open (keyless on LAN) + console gate-skip ([#15](https://github.com/thaynes43/ytdrivarr/issues/15)) ([4c88b7f](https://github.com/thaynes43/ytdrivarr/commit/4c88b7fc3abf0a0b389e6219a70a1a5a4c69446e))
+
 ## [0.3.1](https://github.com/thaynes43/ytdrivarr/compare/v0.3.0...v0.3.1) (2026-07-21)
 
 
