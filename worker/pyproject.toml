@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ytdrivarr-peloton-worker"
+version = "0.1.0"
+description = "Hardened out-of-process Peloton discovery/refresh worker for ytdrivarr (M3)."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "ytdrivarr" }]
+dependencies = [
+    "selenium>=4.15,<5",
+    "requests>=2.31",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "responses>=0.24",
+    "ruff>=0.4",
+]
+
+[project.scripts]
+ytdrivarr-peloton-worker = "ytdrivarr_peloton_worker.__main__:main"
+ytdrivarr-peloton-validate = "ytdrivarr_peloton_worker.validate:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+markers = [
+    "slow: marks tests as slow",
+]
+
+[tool.ruff]
+src = ["src", "tests"]
+line-length = 110
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "W"]
+ignore = [
+    "E501",  # line length is handled by the formatter budget, not hard-failed
+    "B008",  # allow function calls in argument defaults (dep-injection factories)
+    "UP042", # keep the explicit `(str, Enum)` pattern (clearer than StrEnum here)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011", "B017"]
