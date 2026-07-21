@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, lt, or } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNotNull, lt, or } from 'drizzle-orm';
 import { jobs, type Job, type Library, type Source } from '../db/schema';
 import { resolveDb } from '../db/client';
 import type { Database, DbClient } from '../db';
@@ -373,4 +373,49 @@ export async function failJob(input: FailJobInput): Promise<FailJobResult> {
 export async function getJob(id: string, exec?: DbClient): Promise<Job | undefined> {
   const d = resolveDb(exec) as Database;
   return (await d.select().from(jobs).where(eq(jobs.id, id)).limit(1))[0];
+}
+
+// --- worker liveness (health, D-03/D-10) ------------------------------------------------------
+
+export interface WorkerLiveness {
+  /** the most recent claim/heartbeat time across this provider's jobs (the worker's last-seen). */
+  lastSeenAt: Date;
+  /** the status of that most-recent worker-touched job. */
+  lastJobStatus: Job['status'];
+  /**
+   * true when that job is STILL in-flight (`claimed`/`running`) but its heartbeat is older than the
+   * reclaim expiry SLA — i.e. the worker died mid-job. A genuine, honest health signal (the reclaim
+   * loop will pick the job up, but health should say so meanwhile).
+   */
+  stuck: boolean;
+}
+
+/**
+ * Cheapest observable worker-liveness signal for an `out_of_process` provider (DESIGN-045 D-03/D-10):
+ * the most recent claim/heartbeat across this provider's jobs. The OBSERVED-state health model reads
+ * it for providers whose core-side `test()` can't reach the worker's credentials. Only jobs a worker
+ * has actually CLAIMED carry a heartbeat, so a never-claimed queued job is not a liveness signal.
+ *
+ * Returns undefined when no worker has ever claimed a job for this provider (a freshly-added provider,
+ * or one whose first run hasn't dispatched) — that is NOT unhealthy, so the caller must not alarm.
+ */
+export async function getWorkerLivenessForProvider(
+  providerId: string,
+  opts?: { heartbeatExpirySec?: number; now?: Date; db?: DbClient },
+): Promise<WorkerLiveness | undefined> {
+  const d = resolveDb(opts?.db) as Database;
+  const now = opts?.now ?? new Date();
+  const expirySec = opts?.heartbeatExpirySec ?? DEFAULT_HEARTBEAT_EXPIRY_SEC;
+  const row = (
+    await d
+      .select()
+      .from(jobs)
+      .where(and(eq(jobs.providerId, providerId), isNotNull(jobs.heartbeatAt)))
+      .orderBy(desc(jobs.heartbeatAt))
+      .limit(1)
+  )[0];
+  if (!row?.heartbeatAt) return undefined;
+  const inFlight = row.status === 'claimed' || row.status === 'running';
+  const stale = now.getTime() - row.heartbeatAt.getTime() > expirySec * 1000;
+  return { lastSeenAt: row.heartbeatAt, lastJobStatus: row.status, stuck: inFlight && stale };
 }
