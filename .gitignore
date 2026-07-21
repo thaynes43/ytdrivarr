@@ -6,3 +6,10 @@ coverage/
 .env
 .env.*
 .dev-projection/
+
+# python worker build/bytecode artifacts
+worker/**/__pycache__/
+worker/**/*.pyc
+worker/build/
+worker/**/*.egg-info/
+worker/.pytest_cache/
