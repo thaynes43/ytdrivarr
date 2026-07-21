@@ -25,6 +25,7 @@ from enum import Enum
 
 from selenium.common.exceptions import (
     NoSuchElementException,
+    StaleElementReferenceException,
     TimeoutException,
     WebDriverException,
 )
@@ -120,6 +121,8 @@ class PelotonLogin:
         poll: float = 0.5,
         retries: int = 2,
         backoff: float = 2.0,
+        stale_retries: int = 3,
+        stale_settle: float = 1.0,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self.field_timeout = field_timeout
@@ -127,6 +130,8 @@ class PelotonLogin:
         self.poll = poll
         self.retries = retries
         self.backoff = backoff
+        self.stale_retries = stale_retries
+        self.stale_settle = stale_settle
         self._sleep = sleep
         self.logger = get_logger(f"{__name__}.PelotonLogin")
 
@@ -164,21 +169,47 @@ class PelotonLogin:
             return LoginResult(LoginOutcome.TIMEOUT, "username field not found",
                                _current_url(driver))
 
-        try:
-            password_field = wait_for_present(
-                driver, By.NAME, "password", self.field_timeout, self.poll
+        # Fill + submit, RE-FINDING fresh on stale references: the login page hydrates and
+        # REPLACES the form nodes shortly after first paint, so the element wait_for_present
+        # returned can go stale before clear()/send_keys() land (observed live: consecutive
+        # StaleElementReferenceException crashes on every claim, 2026-07-21). The re-found
+        # post-hydration nodes are stable — the same idiom as the scraper's stale_retries.
+        stale_exc: StaleElementReferenceException | None = None
+        for stale_try in range(self.stale_retries):
+            try:
+                user_field = wait_for_present(
+                    driver, By.NAME, "usernameOrEmail", self.field_timeout, self.poll
+                )
+                password_field = wait_for_present(
+                    driver, By.NAME, "password", self.field_timeout, self.poll
+                )
+                user_field.clear()
+                user_field.send_keys(username)
+                password_field.clear()
+                password_field.send_keys(password)
+                submit = wait_for_present(
+                    driver, By.CSS_SELECTOR, 'button[type="submit"]',
+                    self.field_timeout, self.poll,
+                )
+                submit.click()
+                break
+            except StaleElementReferenceException as exc:
+                stale_exc = exc
+                self.logger.info(
+                    "Login form went stale mid-interaction (try %d/%d), re-finding fresh",
+                    stale_try + 1, self.stale_retries,
+                )
+                self._sleep(self.stale_settle)
+            except (TimeoutException, NoSuchElementException) as exc:
+                return LoginResult(LoginOutcome.TIMEOUT, f"login form interaction failed: {exc}",
+                                   _current_url(driver))
+        else:
+            return LoginResult(
+                LoginOutcome.TIMEOUT,
+                f"login form interaction failed: still stale after "
+                f"{self.stale_retries} re-finds: {stale_exc}",
+                _current_url(driver),
             )
-            user_field.clear()
-            user_field.send_keys(username)
-            password_field.clear()
-            password_field.send_keys(password)
-            submit = wait_for_present(
-                driver, By.CSS_SELECTOR, 'button[type="submit"]', self.field_timeout, self.poll
-            )
-            submit.click()
-        except (TimeoutException, NoSuchElementException) as exc:
-            return LoginResult(LoginOutcome.TIMEOUT, f"login form interaction failed: {exc}",
-                               _current_url(driver))
 
         # Wait to LEAVE the /login page rather than sleeping a fixed 15s.
         try:
