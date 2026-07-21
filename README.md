@@ -155,6 +155,7 @@ Every request/response is validated with zod; the OpenAPI 3.1 document is genera
 
 - `GET  /` + `GET /ui/*` — the operator console (static shell + assets; the SPA's data calls carry `X-Api-Key`).
 - `GET  /livez` — liveness (open).
+- `GET  /metrics` — Prometheus exposition (open; see [Observability](#observability-prometheus-metrics)).
 - `GET  /openapi.json` — the generated spec (open).
 - `GET  /health` — service + per-source health (open).
 - `GET  /api/v1/providers` — registered providers and their declared capabilities.
@@ -167,6 +168,58 @@ Every request/response is validated with zod; the OpenAPI 3.1 document is genera
 Everything under `/api/v1` requires `X-Api-Key` in the default `api-key` mode. With `AUTH_MODE=open`
 no key is required for any request (a presented key is still accepted, never rejected), so keyed
 clients keep working unchanged.
+
+## Observability (Prometheus `/metrics`)
+
+`GET /metrics` serves a Prometheus exposition of the run/discovery + health surface the retired
+config-manager used to carry in its auto-merged PR bodies (the per-activity existing/added/total vs
+cap breakdown, scrape stats, credential/worker health, queue depth). It is **unauthenticated** — it
+carries no secrets and the estate scrapes it in-cluster over the Service (the deploy runs
+`AUTH_MODE=open` behind a LAN-only ingress). Every value is **computed from the database (and the
+projected files) at scrape time**, so nothing drifts or resets on a pod restart; the `_total` counters
+are `SUM(...)` over the append-only `runs` table (monotonic across scrapes, restart-safe), so
+`increase()` over a window yields "what changed in it".
+
+**Label conventions.** `provider` is on every run/health series — Peloton runs are provider-attributed
+by the worker report/fail leg; scope-level in-core discovery/emit runs (YouTube is event-driven and
+finalized inline, unattributed by design) bucket under the synthetic provider **`core`**. `activity`
+labels the per-activity Peloton series (watch-grain: one Source per activity, `ref` is the slug);
+`media_kind` (video|music) and `library` label the source/ledger/projection series.
+
+| Metric                                                                                                                                 | Type    | Labels                            | Meaning                                                                      |
+| -------------------------------------------------------------------------------------------------------------------------------------- | ------- | --------------------------------- | ---------------------------------------------------------------------------- |
+| `ytdrivarr_build_info`                                                                                                                 | gauge   | `version`,`node_version`          | Constant 1; build facts in the labels.                                       |
+| `ytdrivarr_up`                                                                                                                         | gauge   | —                                 | 1 when the endpoint is scraped.                                              |
+| `ytdrivarr_db_reachable`                                                                                                               | gauge   | —                                 | 1 if the collector reached the DB this scrape, else 0.                       |
+| `ytdrivarr_metrics_collect_duration_seconds`                                                                                           | gauge   | —                                 | Time spent gathering the scrape.                                             |
+| `ytdrivarr_provider_info`                                                                                                              | gauge   | `provider`,`runtime`,`kind`       | One constant-1 series per registered provider.                               |
+| `ytdrivarr_sources` / `ytdrivarr_sources_monitored`                                                                                    | gauge   | `provider`,`library`,`media_kind` | Configured / monitored (enabled) Source counts.                              |
+| `ytdrivarr_activity_entries`                                                                                                           | gauge   | `provider`,`library`,`activity`   | Per-activity ledger size (Peloton).                                          |
+| `ytdrivarr_activity_cap`                                                                                                               | gauge   | `provider`,`library`,`activity`   | Per-activity effective per-scrape cap.                                       |
+| `ytdrivarr_library_entries`                                                                                                            | gauge   | `library`,`media_kind`            | Ledger size per Library.                                                     |
+| `ytdrivarr_runs_total`                                                                                                                 | counter | `provider`,`status`               | Finalized runs by terminal status (ok\|warn\|error).                         |
+| `ytdrivarr_runs_running`                                                                                                               | gauge   | `provider`                        | Runs currently running (an in-flight job leaves its Run running).            |
+| `ytdrivarr_entries_added_total` / `_removed_total` / `_windowed_out_total` / `_deduped_total`                                          | counter | `provider`                        | Cumulative entry deltas across all runs (use `increase()`).                  |
+| `ytdrivarr_login_attempts_total` / `_failures_total`                                                                                   | counter | `provider`                        | Cumulative worker login outcomes across all runs.                            |
+| `ytdrivarr_bearer_capture_retries_total`                                                                                               | counter | `provider`                        | Cumulative bearer-capture attempts/retries (never-silent-stale-token guard). |
+| `ytdrivarr_last_run_status`                                                                                                            | gauge   | `provider`                        | Last run status code: 0=ok 1=warn 2=error 3=running.                         |
+| `ytdrivarr_last_run_timestamp_seconds` / `ytdrivarr_last_success_timestamp_seconds`                                                    | gauge   | `provider`                        | Last run / last successful (ok\|warn) run time — age = `time() - …`.         |
+| `ytdrivarr_last_run_duration_seconds`                                                                                                  | gauge   | `provider`                        | Wall-clock duration of the last finalized run.                               |
+| `ytdrivarr_last_run_discovered` / `_added` / `_removed` / `_unchanged` / `_deduped` / `_emitted` / `_windowed_out`                     | gauge   | `provider`                        | The last run's counts (the daily snapshot).                                  |
+| `ytdrivarr_last_run_links_found` / `_links_malformed` / `_scrolls` / `_scroll_capped` / `_selector_drift_hits`                         | gauge   | `provider`                        | The last run's scrape telemetry (Peloton).                                   |
+| `ytdrivarr_last_run_activity_existing` / `_added` / `_total` / `_cap` / `_at_cap` / `_over_cap` / `_scraped` / `_skipped` / `_scrolls` | gauge   | `provider`,`activity`             | The #2168 per-activity table as gauges (from the last run).                  |
+| `ytdrivarr_bearer_age_seconds`                                                                                                         | gauge   | `provider`                        | Age of the last minted bearer/session (now − mintedAt).                      |
+| `ytdrivarr_bearer_sla_seconds`                                                                                                         | gauge   | `provider`                        | The bearer-freshness SLA (D-07), for thresholding against the age.           |
+| `ytdrivarr_credential_age_status`                                                                                                      | gauge   | `provider`                        | Credential-age code: 0=ok 1=warn(≥1× SLA) 2=error(≥2× SLA) 3=unknown.        |
+| `ytdrivarr_jobs`                                                                                                                       | gauge   | `provider`,`status`               | Transport jobs by status (`queued`=queue depth, `error`=failed).             |
+| `ytdrivarr_job_attempts`                                                                                                               | gauge   | `provider`                        | Sum of claim attempts across a provider's jobs (retry pressure).             |
+| `ytdrivarr_worker_last_seen_timestamp_seconds` / `ytdrivarr_worker_heartbeat_age_seconds`                                              | gauge   | `provider`                        | Worker liveness (last claim/heartbeat).                                      |
+| `ytdrivarr_projection_file_size_bytes`                                                                                                 | gauge   | `library`,`file`                  | Size of each projected file (`file="config"\|"subscriptions"`).              |
+| `ytdrivarr_projection_last_emit_timestamp_seconds`                                                                                     | gauge   | `library`                         | mtime of each Library's projected `subscriptions.yaml`.                      |
+
+The estate scrapes this via a `ServiceMonitor` and renders it in the **ytdrivarr** Grafana dashboard
+(GitOps-provisioned in `haynes-ops`). Grafana becomes the trend/daily-review surface; the console's
+Activity page stays the per-run drill-in.
 
 ## Status
 
