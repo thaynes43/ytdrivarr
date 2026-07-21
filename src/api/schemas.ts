@@ -93,6 +93,14 @@ export const sourceHealthDto = z.object({
   checkedAt: z.string(),
   credentialAgeSec: z.number().optional(),
   selectorDriftHits: z.number().optional(),
+  // Additive observed-state fields (out_of_process health model, D-03/D-10) — optional so the
+  // existing console rendering stays truthful; a probe-model (in_core) row carries only the first.
+  healthModel: z.enum(['probe', 'observed']).optional(),
+  runtime: z.enum(['in_core', 'out_of_process']).optional(),
+  lastRunStatus: z.enum(['running', 'ok', 'warn', 'error']).optional(),
+  lastRunAt: z.string().optional(),
+  bearerMintedAt: z.string().optional(),
+  workerLastSeenSec: z.number().optional(),
 });
 export const healthDto = z.object({
   status: z.enum(['ok', 'warn', 'error']),

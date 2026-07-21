@@ -1,20 +1,28 @@
 import { getProvider } from './registry';
 import { buildContext } from './discovery';
 import { createStateStore } from './state-store';
+import { getWorkerLivenessForProvider } from './jobs';
 import { listSources } from '../domain/sources';
-import { getLastRunForProvider } from '../domain/runs';
+import { getLastRunForProvider, type RunStatus } from '../domain/runs';
+import type { Runtime, SourceProvider } from '../contracts';
+import type { Source } from '../db/schema';
 import type { DbClient } from '../db';
 
 /**
- * C7 (DESIGN-045 D-10) — aggregate per-source health by running each provider's `test()` probe, then
- * ENRICH it with the two first-class alarms that are today's SILENT failures:
+ * C7 (DESIGN-045 D-10) — aggregate per-source health. Two models, chosen by the provider's runtime:
  *
- *  - **credential-age** — now − the provider's last-minted-session time (provider state `session`)
- *    vs its bearer-freshness SLA (`scheduling.credentialRefreshSec`, D-07): WARN at ≥1× the SLA,
- *    ERROR at ≥2× (the aging-token → downloads-silently-stop gap, closed).
- *  - **selector-drift** — the last run for the provider whose telemetry reported
- *    `selectorDriftHits > 0` (a scrape whose selectors returned zero/malformed hits): WARN, so the
- *    estate hears about a broken scrape BEFORE it notices missing downloads.
+ *  - **`in_core` providers (PROBE):** run the provider's own `test()` reachability/credential probe,
+ *    then ENRICH it with the two first-class alarms — **credential-age** (now − the provider's
+ *    last-minted-session time vs its bearer-freshness SLA `credentialRefreshSec`, D-07: WARN at ≥1×,
+ *    ERROR at ≥2×) and **selector-drift** (the last run reported `selectorDriftHits > 0`: WARN).
+ *
+ *  - **`out_of_process` providers (OBSERVED, D-03/D-05):** their credentials live ONLY in the
+ *    plugin-owned worker (the D-05/D-21 split) — the core never holds them, so calling `test()` here
+ *    would false-alarm on "missing credentials" for a provider that is running fine. Instead health
+ *    is derived from OBSERVED state the core already stores: (a) the last run's status + recorded
+ *    alarms, (b) bearer/credential freshness from provider state vs the SLA, (c) worker liveness
+ *    (last claim/heartbeat) from the jobs table. A worker genuinely lacking creds surfaces HONESTLY
+ *    as failed runs / alarms via (a) — missing worker env is NEVER a core-side failure.
  */
 
 export interface SourceHealth {
@@ -25,6 +33,20 @@ export interface SourceHealth {
   checkedAt: string;
   credentialAgeSec?: number;
   selectorDriftHits?: number;
+  // --- additive observed-state fields (kept optional so existing consumers stay truthful) -------
+  /** which health model produced this row: `probe` = the provider's in-core test(); `observed` =
+   *  derived from stored run/credential/worker state (out_of_process providers). */
+  healthModel?: 'probe' | 'observed';
+  /** the provider's runtime, echoed so the console/API can see which model was used. */
+  runtime?: Runtime;
+  /** (observed) the provider's most recent run status. */
+  lastRunStatus?: RunStatus;
+  /** (observed) when that run finished (or started, if still running). */
+  lastRunAt?: string;
+  /** (observed) the last-minted bearer timestamp read from provider state. */
+  bearerMintedAt?: string;
+  /** (observed) seconds since the worker was last seen (last claim/heartbeat), when any. */
+  workerLastSeenSec?: number;
 }
 
 export interface ServiceHealth {
@@ -87,6 +109,183 @@ export function credentialAgeAlarm(
   };
 }
 
+/**
+ * IN-CORE (PROBE) health — the provider's own `test()` reachability/credential probe, ENRICHED with
+ * the credential-age + selector-drift alarms. This is the ORIGINAL model, unchanged, and is used for
+ * `in_core` providers whose `test()` runs entirely inside the core.
+ */
+async function probedHealth(
+  source: Source,
+  provider: SourceProvider,
+  exec?: DbClient,
+): Promise<SourceHealth> {
+  const ctx = buildContext(source, provider.stateNamespace, exec);
+  const base = await provider.test(ctx);
+
+  let status: HealthStatus4 = base.status;
+  let message = base.message;
+  let credentialAgeSec = base.credentialAgeSec;
+  let selectorDriftHits = base.selectorDriftHits;
+
+  // --- credential-age alarm (D-10) — read the provider's last-minted-session directly, so the
+  //     alarm fires even when test() reported another status. Only for providers that declare a
+  //     bearer-freshness SLA (cron providers with credentialRefreshSec).
+  const refreshSec =
+    provider.scheduling.mode === 'cron' ? provider.scheduling.credentialRefreshSec : undefined;
+  if (refreshSec && refreshSec > 0) {
+    const session = await createStateStore(provider.stateNamespace, exec).get<{
+      mintedAt?: string;
+    }>('session');
+    if (session?.mintedAt) {
+      const alarm = credentialAgeAlarm(session.mintedAt, refreshSec);
+      credentialAgeSec = alarm.ageSec;
+      if (alarm.status !== 'ok') {
+        status = escalate(status, alarm.status);
+        message = alarm.message;
+      }
+    }
+  }
+
+  // --- selector-drift alarm (D-10) — the last run for this provider reported drift hits.
+  const lastRun = await getLastRunForProvider(source.providerId, exec);
+  const drift = lastRun
+    ? Number((lastRun.telemetry as { selectorDriftHits?: number }).selectorDriftHits ?? 0)
+    : 0;
+  if (drift > 0) {
+    selectorDriftHits = drift;
+    status = escalate(status, 'warn');
+    message = message
+      ? `${message}; selector drift ${drift}`
+      : `selector drift ${drift} on last run`;
+  }
+
+  return {
+    sourceId: source.id,
+    providerId: source.providerId,
+    status,
+    checkedAt: base.checkedAt,
+    healthModel: 'probe',
+    runtime: provider.runtime,
+    ...(message !== undefined ? { message } : {}),
+    ...(credentialAgeSec !== undefined ? { credentialAgeSec } : {}),
+    ...(selectorDriftHits !== undefined ? { selectorDriftHits } : {}),
+  };
+}
+
+/**
+ * OUT-OF-PROCESS (OBSERVED) health — DESIGN-045 D-03/D-05/D-10. NEVER calls the provider's `test()`:
+ * an out_of_process provider's credentials live only in its worker (the D-05/D-21 split), so a
+ * core-side `test()` would false-alarm on "missing credentials". Health is derived from OBSERVED
+ * state the core already stores. Missing worker env is NOT a failure here — a worker genuinely
+ * lacking creds surfaces as failed runs / alarms via (a), which this model reflects honestly.
+ */
+async function observedHealth(
+  source: Source,
+  provider: SourceProvider,
+  exec?: DbClient,
+): Promise<SourceHealth> {
+  const checkedAt = new Date().toISOString();
+  let status: HealthStatus4 = 'ok';
+  const notes: string[] = [];
+  let credentialAgeSec: number | undefined;
+  let selectorDriftHits: number | undefined;
+  let bearerMintedAt: string | undefined;
+  let lastRunStatus: RunStatus | undefined;
+  let lastRunAt: string | undefined;
+  let workerLastSeenSec: number | undefined;
+
+  // (b) bearer/credential freshness — the last-minted-session age vs the SLA (D-07/D-10).
+  const refreshSec =
+    provider.scheduling.mode === 'cron' ? provider.scheduling.credentialRefreshSec : undefined;
+  const session = await createStateStore(provider.stateNamespace, exec).get<{
+    mintedAt?: string;
+  }>('session');
+  if (session?.mintedAt) {
+    bearerMintedAt = session.mintedAt;
+    if (refreshSec && refreshSec > 0) {
+      const alarm = credentialAgeAlarm(session.mintedAt, refreshSec);
+      credentialAgeSec = alarm.ageSec;
+      notes.push(alarm.message);
+      if (alarm.status !== 'ok') status = escalate(status, alarm.status);
+    } else {
+      credentialAgeSec = Math.max(
+        0,
+        Math.floor((Date.now() - Date.parse(session.mintedAt)) / 1000),
+      );
+      notes.push(`bearer minted ${credentialAgeSec}s ago`);
+    }
+  } else {
+    // No bearer minted yet — the downloader has no token, but this is a pre-first-run state, not a
+    // failure. WARN so it is visible without turning overall health red on a brand-new source.
+    status = escalate(status, 'warn');
+    notes.push('no bearer minted yet');
+  }
+
+  // (a) last completed run status + recorded alarms (D-10).
+  const lastRun = await getLastRunForProvider(source.providerId, exec);
+  if (lastRun) {
+    lastRunStatus = lastRun.status;
+    lastRunAt = (lastRun.finishedAt ?? lastRun.startedAt).toISOString();
+    const telemetry = lastRun.telemetry as {
+      selectorDriftHits?: number;
+      alarms?: Array<{ kind?: string }>;
+    };
+    const drift = Number(telemetry.selectorDriftHits ?? 0);
+    if (drift > 0) {
+      selectorDriftHits = drift;
+      status = escalate(status, 'warn');
+      notes.push(`selector drift ${drift}`);
+    }
+    const alarmKinds = Array.isArray(telemetry.alarms)
+      ? telemetry.alarms.map((a) => a?.kind).filter((k): k is string => typeof k === 'string')
+      : [];
+    if (lastRun.status === 'error') {
+      status = escalate(status, 'error');
+      notes.push(
+        alarmKinds.length ? `last run failed (${alarmKinds.join(', ')})` : 'last run failed',
+      );
+    } else if (lastRun.status === 'warn') {
+      status = escalate(status, 'warn');
+      notes.push(
+        alarmKinds.length ? `last run warned (${alarmKinds.join(', ')})` : 'last run warned',
+      );
+    } else {
+      notes.push(`last run ${lastRun.status}`);
+    }
+  } else {
+    notes.push('no runs yet');
+  }
+
+  // (c) worker liveness — the last claim/heartbeat age (cheaply visible from the jobs table).
+  const liveness = await getWorkerLivenessForProvider(source.providerId, { db: exec });
+  if (liveness) {
+    workerLastSeenSec = Math.max(
+      0,
+      Math.floor((Date.now() - liveness.lastSeenAt.getTime()) / 1000),
+    );
+    if (liveness.stuck) {
+      status = escalate(status, 'warn');
+      notes.push('worker heartbeat stale on an in-flight job');
+    }
+  }
+
+  return {
+    sourceId: source.id,
+    providerId: source.providerId,
+    status,
+    checkedAt,
+    healthModel: 'observed',
+    runtime: provider.runtime,
+    message: notes.join('; '),
+    ...(credentialAgeSec !== undefined ? { credentialAgeSec } : {}),
+    ...(selectorDriftHits !== undefined ? { selectorDriftHits } : {}),
+    ...(bearerMintedAt !== undefined ? { bearerMintedAt } : {}),
+    ...(lastRunStatus !== undefined ? { lastRunStatus } : {}),
+    ...(lastRunAt !== undefined ? { lastRunAt } : {}),
+    ...(workerLastSeenSec !== undefined ? { workerLastSeenSec } : {}),
+  };
+}
+
 export async function collectHealth(exec?: DbClient): Promise<ServiceHealth> {
   const sources = await listSources(exec);
   const results: SourceHealth[] = [];
@@ -95,56 +294,12 @@ export async function collectHealth(exec?: DbClient): Promise<ServiceHealth> {
   for (const source of sources) {
     try {
       const provider = getProvider(source.providerId);
-      const ctx = buildContext(source, provider.stateNamespace, exec);
-      const base = await provider.test(ctx);
-
-      let status: HealthStatus4 = base.status;
-      let message = base.message;
-      let credentialAgeSec = base.credentialAgeSec;
-      let selectorDriftHits = base.selectorDriftHits;
-
-      // --- credential-age alarm (D-10) — read the provider's last-minted-session directly, so the
-      //     alarm fires even when test() reported another status. Only for providers that declare a
-      //     bearer-freshness SLA (cron providers with credentialRefreshSec — Peloton).
-      const refreshSec =
-        provider.scheduling.mode === 'cron' ? provider.scheduling.credentialRefreshSec : undefined;
-      if (refreshSec && refreshSec > 0) {
-        const session = await createStateStore(provider.stateNamespace, exec).get<{
-          mintedAt?: string;
-        }>('session');
-        if (session?.mintedAt) {
-          const alarm = credentialAgeAlarm(session.mintedAt, refreshSec);
-          credentialAgeSec = alarm.ageSec;
-          if (alarm.status !== 'ok') {
-            status = escalate(status, alarm.status);
-            message = alarm.message;
-          }
-        }
-      }
-
-      // --- selector-drift alarm (D-10) — the last run for this provider reported drift hits.
-      const lastRun = await getLastRunForProvider(source.providerId, exec);
-      const drift = lastRun
-        ? Number((lastRun.telemetry as { selectorDriftHits?: number }).selectorDriftHits ?? 0)
-        : 0;
-      if (drift > 0) {
-        selectorDriftHits = drift;
-        status = escalate(status, 'warn');
-        message = message
-          ? `${message}; selector drift ${drift}`
-          : `selector drift ${drift} on last run`;
-      }
-
-      results.push({
-        sourceId: source.id,
-        providerId: source.providerId,
-        status,
-        checkedAt: base.checkedAt,
-        ...(message !== undefined ? { message } : {}),
-        ...(credentialAgeSec !== undefined ? { credentialAgeSec } : {}),
-        ...(selectorDriftHits !== undefined ? { selectorDriftHits } : {}),
-      });
-      overall = worse(overall, status);
+      const sh =
+        provider.runtime === 'out_of_process'
+          ? await observedHealth(source, provider, exec)
+          : await probedHealth(source, provider, exec);
+      results.push(sh);
+      overall = worse(overall, sh.status);
     } catch (err) {
       results.push({
         sourceId: source.id,
