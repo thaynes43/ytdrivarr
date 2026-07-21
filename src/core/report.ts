@@ -11,7 +11,12 @@ import { ConflictError, NotFoundError, ValidationError } from '../errors';
 import { getProvider } from './registry';
 import { createStateStore } from './state-store';
 import { deliverSession } from './credentials';
-import { dedupEntries, preservePublishedNumbering } from './dedup';
+import {
+  dedupEntries,
+  dedupTitleCollisions,
+  dropTitleCollisions,
+  preservePublishedNumbering,
+} from './dedup';
 import { emitLibrary } from './emitter';
 import { projectLibrary, resolveProjectionDir } from './projection';
 import { getLibrary } from '../domain/libraries';
@@ -100,9 +105,17 @@ export async function reportJob(input: ReportJobInput): Promise<ReportJobOutcome
   // 1) validate the reported entries.
   const validated = input.result.entries.map((e) => subscriptionEntrySchema.parse(e));
 
-  // 2) MERGE (not replace), preserving immutable published numbering.
+  // 2) MERGE (not replace), preserving immutable published numbering. The donor-parity title
+  //    guard runs first: a re-aired class under an already-bound (chip, displayName) is skipped,
+  //    exactly as the donor scraper skipped re-aired titles (a second same-title row could never
+  //    surface in the projection anyway — the emitted YAML map keys by title).
+  const existingRows = await listEntriesForSource(sourceId, d);
+  const titleGuard = dropTitleCollisions(
+    validated,
+    existingRows.map((row) => rowToEntry(row)),
+  );
   const published = await loadPublishedNumbering(sourceId, d);
-  const numbered = preservePublishedNumbering(validated, published);
+  const numbered = preservePublishedNumbering(titleGuard.kept, published);
   const merged = await mergeEntriesForSource(sourceId, numbered, d);
 
   // 3) deliver the session artifacts + record the mint time (the credential-age alarm, D-10).
@@ -132,7 +145,7 @@ export async function reportJob(input: ReportJobInput): Promise<ReportJobOutcome
     const rows = await listEntriesForSource(source.id, d);
     for (const row of rows) libraryEntries.push(rowToEntry(row));
   }
-  const deduped = dedupEntries(libraryEntries);
+  const deduped = dedupTitleCollisions(dedupEntries(libraryEntries));
   const emitted = emitLibrary(
     {
       presetName: library.presetName,
@@ -152,6 +165,7 @@ export async function reportJob(input: ReportJobInput): Promise<ReportJobOutcome
     added: merged.added,
     updated: merged.updated,
     deduped: libraryEntries.length - deduped.length,
+    titleCollisions: titleGuard.dropped,
     emitted: deduped.length,
     entries: merged.total,
   };

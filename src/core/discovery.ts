@@ -3,7 +3,7 @@ import { getProvider } from './registry';
 import { dispatchDiscovery } from './dispatcher';
 import { buildDiscoveryPayload, enqueueDiscoveryJob } from './jobs';
 import { createStateStore } from './state-store';
-import { dedupEntries, preservePublishedNumbering } from './dedup';
+import { dedupEntries, dedupTitleCollisions, preservePublishedNumbering } from './dedup';
 import { emitLibrary } from './emitter';
 import { projectLibrary, resolveProjectionDir } from './projection';
 import { buildRunSummary, runSummaryToJson } from '../domain/run-summary';
@@ -181,7 +181,7 @@ export async function runDiscovery(input: RunDiscoveryInput): Promise<DiscoveryO
         const rows = await listEntriesForSource(source.id, input.db);
         for (const row of rows) libraryEntries.push(rowToEntry(row));
       }
-      const deduped = dedupEntries(libraryEntries);
+      const deduped = dedupTitleCollisions(dedupEntries(libraryEntries));
       counts.deduped += libraryEntries.length - deduped.length;
 
       const emitted = emitLibrary(
