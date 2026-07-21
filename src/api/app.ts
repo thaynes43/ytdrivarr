@@ -91,6 +91,8 @@ export interface CreateAppOptions {
   /** D-03 — reclaim SLA + retry ceiling for the out-of-process transport. */
   jobHeartbeatExpirySec?: number;
   jobMaxAttempts?: number;
+  /** D-14 — the donor-parity emit window (days) for entry-grain providers; 0 = unbounded. */
+  emitWindowDays?: number;
   /** Where the built operator-console assets live (tests override; prod/dev auto-resolve). */
   consoleDir?: string;
 }
@@ -538,6 +540,7 @@ function buildRoutes(opts: CreateAppOptions): RouteDef[] {
           ...(body.scopeRef !== undefined ? { scopeRef: body.scopeRef } : {}),
           ...(body.trigger !== undefined ? { trigger: body.trigger } : {}),
           ...(opts.projectionRoot !== undefined ? { projectionRoot: opts.projectionRoot } : {}),
+          ...(opts.emitWindowDays !== undefined ? { emitWindowDays: opts.emitWindowDays } : {}),
         });
         return json(c, discoveryOutcomeDto, outcome, 201);
       },
@@ -662,6 +665,7 @@ function buildRoutes(opts: CreateAppOptions): RouteDef[] {
           result: body.result,
           ...(opts.projectionRoot !== undefined ? { projectionRoot: opts.projectionRoot } : {}),
           ...(opts.credentialRoot !== undefined ? { credentialRoot: opts.credentialRoot } : {}),
+          ...(opts.emitWindowDays !== undefined ? { emitWindowDays: opts.emitWindowDays } : {}),
         });
         return json(c, reportJobResponse, outcome);
       },

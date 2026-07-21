@@ -17,6 +17,7 @@ import {
   dropTitleCollisions,
   preservePublishedNumbering,
 } from './dedup';
+import { applyEmitWindow, DEFAULT_EMIT_WINDOW_DAYS, type EntryWindowMeta } from './emit-window';
 import { emitLibrary } from './emitter';
 import { projectLibrary, resolveProjectionDir } from './projection';
 import { getLibrary } from '../domain/libraries';
@@ -63,6 +64,9 @@ export interface ReportJobInput {
   result: ReportResultBody;
   projectionRoot?: string;
   credentialRoot?: string;
+  /** D-14 — the donor-parity emit window (days) for entry-grain providers; 0 = unbounded. Defaults
+   * to `DEFAULT_EMIT_WINDOW_DAYS` when unset so the window is ON even if a caller forgets to thread it. */
+  emitWindowDays?: number;
   db?: DbClient;
 }
 
@@ -177,12 +181,17 @@ export async function reportJob(input: ReportJobInput): Promise<ReportJobOutcome
     }
   }
 
-  // 4) recompose the whole library from ALL persisted entries + atomically project. An
-  //    UNMONITORED (enabled=false) source's entries stay in the database but are EXCLUDED here —
-  //    that is exactly what unmonitoring an activity removes from the projection, and what
-  //    re-monitoring restores. `merged.total` is recomputed across the provider's sources so the
-  //    Run's `entries` count spans every activity, not just this report's routed targets.
+  // 4) recompose the whole library from ALL persisted entries, apply the donor-parity emit window
+  //    (entry-grain providers only — stale classes drop from the FILE, their ledger rows + immutable
+  //    numbering stay), and atomically project. An UNMONITORED (enabled=false) source's entries
+  //    stay in the database but are EXCLUDED here — that is exactly what unmonitoring an activity
+  //    removes from the projection, and what re-monitoring restores. `merged.total` is recomputed
+  //    across the provider's sources so the Run's `entries` count spans every activity (the
+  //    LEDGER, not the windowed file), and the window map carries each row's first-seen
+  //    (createdAt) + whether its provider opts in.
+  const emitWindowDays = input.emitWindowDays ?? DEFAULT_EMIT_WINDOW_DAYS;
   const libraryEntries: SubscriptionEntry[] = [];
+  const windowMeta = new Map<string, EntryWindowMeta>();
   const postCounts = new Map<string, number>();
   merged.total = 0;
   for (const source of sources) {
@@ -192,9 +201,16 @@ export async function reportJob(input: ReportJobInput): Promise<ReportJobOutcome
       merged.total += rows.length;
     }
     if (!source.enabled) continue;
-    for (const row of rows) libraryEntries.push(rowToEntry(row));
+    const providerWindowed = getProvider(source.providerId).emitWindow === true;
+    for (const row of rows) {
+      libraryEntries.push(rowToEntry(row));
+      if (!windowMeta.has(row.entryKey)) {
+        windowMeta.set(row.entryKey, { firstSeenAt: row.createdAt, windowed: providerWindowed });
+      }
+    }
   }
   const deduped = dedupTitleCollisions(dedupEntries(libraryEntries));
+  const windowed = applyEmitWindow(deduped, windowMeta, emitWindowDays);
   const emitted = emitLibrary(
     {
       presetName: library.presetName,
@@ -202,7 +218,7 @@ export async function reportJob(input: ReportJobInput): Promise<ReportJobOutcome
       emitPolicy: library.emitPolicy,
       libraryKind: library.libraryKind,
     },
-    deduped,
+    windowed.emitted,
   );
   const dir = resolveProjectionDir(library.projectionPath, input.projectionRoot);
   await projectLibrary(dir, emitted);
@@ -268,7 +284,8 @@ export async function reportJob(input: ReportJobInput): Promise<ReportJobOutcome
     updated: merged.updated,
     deduped: libraryEntries.length - deduped.length,
     titleCollisions: titleCollisionsDropped,
-    emitted: deduped.length,
+    windowedOut: windowed.dropped,
+    emitted: windowed.emitted.length,
     entries: merged.total,
   };
   const provider = getProvider(job.providerId);
