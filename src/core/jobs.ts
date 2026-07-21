@@ -10,7 +10,12 @@ import {
 } from '../domain/entries';
 import { finishRun, getRun, recordRunTelemetry } from '../domain/runs';
 import { buildRunSummary, runSummaryToJson } from '../domain/run-summary';
-import { pelotonSettingsSchema, PELOTON_CREDENTIAL_REFRESH_SEC } from '../providers/peloton';
+import {
+  effectivePelotonCap,
+  pelotonSettingsSchema,
+  PELOTON_CREDENTIAL_REFRESH_SEC,
+  type PelotonSettings,
+} from '../providers/peloton';
 import { buildFolderConfig, type FolderConfig } from '../providers/peloton/folder-mapping';
 import {
   episodeNumberingFromEntries,
@@ -71,6 +76,13 @@ export interface DiscoveryPayload {
   mode: 'scrape' | 'refresh';
   source: DiscoverySourcePayload;
   peloton: PelotonDiscoveryPayload;
+  /**
+   * Watch-grain routing (per-activity sources, migration 0002): activity slug → the per-activity
+   * Source id the report leg merges that activity's entries into. `sourceId` stays the group's
+   * ANCHOR source (a valid fallback target), so a pre-split payload still reports cleanly; the
+   * worker never reads this map — it is core-to-core routing state carried on the job.
+   */
+  sourceIdsByActivity?: Record<string, string>;
 }
 
 /** The job as returned to a claiming worker (the transport response shape). */
@@ -92,53 +104,123 @@ function toClaimedJob(job: Job): ClaimedJob {
   };
 }
 
-/**
- * Build a discovery job's full payload at enqueue time (the CORE owns this). `existingClassIds` and
- * the per-(activity, duration) `episodeNumbering` seed are computed from the source's PERSISTED
- * entries (entryKey = classId; episodeNumbering[activitySlug][duration] = max episode for that
- * activity at that duration, activity resolved from each entry's chip). When the source sets
- * `diskScanPath`, the disk scan is folded in (max per key), mirroring the donor's disk ⊔
- * subscriptions merge. `mode:'refresh'` produces the same payload but signals mint-bearer-only.
- */
-export async function buildDiscoveryPayload(
-  args: { runId: string; source: Source; library: Library; mode?: 'scrape' | 'refresh' },
-  exec?: DbClient,
-): Promise<DiscoveryPayload> {
-  const { runId, source, library } = args;
-  const rows = await listEntriesForSource(source.id, exec);
-  const existingClassIds = rows.map((r) => r.entryKey);
-  const settings = pelotonSettingsSchema.parse(source.settings);
-  const subsNumbering = episodeNumberingFromEntries(rows);
-  const episodeNumbering = settings.diskScanPath
-    ? mergeNumbering(subsNumbering, episodesFromDisk(settings.diskScanPath))
-    : subsNumbering;
+/** The scrape-profile signature a per-activity Source contributes to job grouping. */
+function scrapeProfileKey(settings: PelotonSettings): string {
+  return JSON.stringify([
+    effectivePelotonCap(settings),
+    settings.dynamicScrolling,
+    settings.maxScrolls,
+    settings.scrollPauseSec,
+    settings.pageLoadWaitSec,
+    settings.loginWaitSec,
+    settings.diskScanPath ?? null,
+  ]);
+}
 
-  return {
-    runId,
-    sourceId: source.id,
-    libraryId: library.id,
-    providerId: source.providerId,
-    mode: args.mode ?? 'scrape',
-    source: {
-      ref: source.ref,
-      displayName: source.displayName,
-      mediaKind: source.mediaKind,
-      settings: source.settings,
-    },
-    peloton: {
-      activities: settings.activities,
-      maxClassesPerActivity: settings.maxClassesPerActivity,
-      dynamicScrolling: settings.dynamicScrolling,
-      maxScrolls: settings.maxScrolls,
-      scrollPauseSec: settings.scrollPauseSec,
-      pageLoadWaitSec: settings.pageLoadWaitSec,
-      loginWaitSec: settings.loginWaitSec,
-      existingClassIds,
-      episodeNumbering,
-      mediaRoot: library.mediaRoot,
-      folder: buildFolderConfig(library.mediaRoot),
-    },
-  };
+/**
+ * Build the discovery job payload(s) for a Library's per-activity Peloton Sources at enqueue time
+ * (the CORE owns this). The watch-grain model (migration 0002) stores one Source PER ACTIVITY —
+ * this builder re-AGGREGATES the in-scope, enabled ones back into the worker's single-job shape,
+ * so one nightly login still walks every monitored activity:
+ *
+ *   - grouped by scrape-profile signature (effective cap + scroll/wait profile + diskScanPath):
+ *     uniformly-configured activities — the normal state — produce EXACTLY ONE job; an activity
+ *     with a per-source cap override honestly gets its own job at its own cap (the worker payload
+ *     carries a single `maxClassesPerActivity`, and the worker image is a fixed contract);
+ *   - `activities` = the group's Source refs (the activity slugs), sorted;
+ *   - `existingClassIds` = the UNION across ALL of the library's Peloton sources (monitored or
+ *     not) — a class already persisted under a sibling activity is never re-added (donor parity:
+ *     one global existing-ids set per scrape);
+ *   - `episodeNumbering` = merged across ALL Peloton sources' entries + the optional disk scan —
+ *     an unmonitored activity keeps its band, so re-monitoring continues its sequence exactly
+ *     (published numbering is immutable, Q-02 §6 #8);
+ *   - `sourceId` = the group's first source (anchor) + `sourceIdsByActivity` for the report leg's
+ *     chip-routed merge. A DISABLED activity source is simply absent from `activities`, which is
+ *     what EXCLUDES it from the next scrape; its persisted entries stay put and the projection
+ *     recompose skips them separately (discovery/report step 4).
+ *
+ * `mode:'refresh'` produces the same payload but signals mint-bearer-only.
+ */
+export async function buildPelotonDiscoveryPayloads(
+  args: {
+    runId: string;
+    /** the scrape candidates (the run's in-scope sources; disabled ones are filtered here). */
+    sources: Source[];
+    /** EVERY Peloton source of the library (defaults to `sources`) — the dedup/numbering seed
+     * always spans the full set, so a scoped or partially-unmonitored run can never renumber. */
+    allSources?: Source[];
+    library: Library;
+    mode?: 'scrape' | 'refresh';
+  },
+  exec?: DbClient,
+): Promise<DiscoveryPayload[]> {
+  const { runId, library } = args;
+  const enabled = args.sources.filter((s) => s.enabled);
+  if (enabled.length === 0) return [];
+
+  // The shared dedup + numbering seed spans EVERY Peloton source of the library (even unmonitored
+  // ones — their persisted history still anchors dedup and numbering continuity).
+  const allClassIds: string[] = [];
+  let subsNumbering: NestedNumbering = {};
+  const diskScanPaths = new Set<string>();
+  for (const source of args.allSources ?? args.sources) {
+    const rows = await listEntriesForSource(source.id, exec);
+    for (const row of rows) allClassIds.push(row.entryKey);
+    subsNumbering = mergeNumbering(subsNumbering, episodeNumberingFromEntries(rows));
+    const settings = pelotonSettingsSchema.parse(source.settings);
+    if (settings.diskScanPath) diskScanPaths.add(settings.diskScanPath);
+  }
+  let episodeNumbering = subsNumbering;
+  for (const path of diskScanPaths) {
+    episodeNumbering = mergeNumbering(episodeNumbering, episodesFromDisk(path));
+  }
+  const existingClassIds = [...new Set(allClassIds)];
+
+  // Group the enabled activities by scrape-profile signature; one job per distinct profile.
+  const groups = new Map<string, Source[]>();
+  for (const source of [...enabled].sort((a, b) => a.ref.localeCompare(b.ref))) {
+    const key = scrapeProfileKey(pelotonSettingsSchema.parse(source.settings));
+    const group = groups.get(key);
+    if (group) group.push(source);
+    else groups.set(key, [source]);
+  }
+
+  const payloads: DiscoveryPayload[] = [];
+  for (const group of groups.values()) {
+    const anchor = group[0];
+    if (!anchor) continue;
+    const settings = pelotonSettingsSchema.parse(anchor.settings);
+    const sourceIdsByActivity: Record<string, string> = {};
+    for (const source of group) sourceIdsByActivity[source.ref] = source.id;
+    payloads.push({
+      runId,
+      sourceId: anchor.id,
+      libraryId: library.id,
+      providerId: anchor.providerId,
+      mode: args.mode ?? 'scrape',
+      source: {
+        ref: anchor.ref,
+        displayName: anchor.displayName,
+        mediaKind: anchor.mediaKind,
+        settings: anchor.settings,
+      },
+      peloton: {
+        activities: group.map((s) => s.ref),
+        maxClassesPerActivity: effectivePelotonCap(settings),
+        dynamicScrolling: settings.dynamicScrolling,
+        maxScrolls: settings.maxScrolls,
+        scrollPauseSec: settings.scrollPauseSec,
+        pageLoadWaitSec: settings.pageLoadWaitSec,
+        loginWaitSec: settings.loginWaitSec,
+        existingClassIds,
+        episodeNumbering,
+        mediaRoot: library.mediaRoot,
+        folder: buildFolderConfig(library.mediaRoot),
+      },
+      sourceIdsByActivity,
+    });
+  }
+  return payloads;
 }
 
 /** Enqueue a discovery job with its full payload + the linked Run (the report/fail path finalizes). */
@@ -364,6 +446,7 @@ export async function failJob(input: FailJobInput): Promise<FailJobResult> {
       telemetry: mergedTelemetry,
       summary: runSummaryToJson(summary),
       logExcerpt: input.error,
+      providerId: job.providerId,
       db: d,
     });
   }

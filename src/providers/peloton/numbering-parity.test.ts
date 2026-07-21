@@ -7,7 +7,7 @@ import { createLibrary } from '../../domain/libraries';
 import { createSource } from '../../domain/sources';
 import { startRun } from '../../domain/runs';
 import { mergeEntriesForSource } from '../../domain/entries';
-import { buildDiscoveryPayload } from '../../core/jobs';
+import { buildPelotonDiscoveryPayloads } from '../../core/jobs';
 import type { SubscriptionEntry } from '../../contracts';
 import {
   episodeNumberingFromEntries,
@@ -261,13 +261,16 @@ describe('buildDiscoveryPayload — nested seed + disk merge (embedded PG)', () 
       projectionPath: `peloton-${Math.random().toString(36).slice(2)}`,
       db: t.db,
     });
+    // Watch-grain model: ref = an activity slug. The numbering SEED spans every entry chip the
+    // provider's sources carry, so one source holding mixed-chip history still exercises the
+    // full nested-seed derivation (exactly what a freshly-migrated anchor source looks like).
     const src = await createSource({
       libraryId: lib.id,
       providerId: 'peloton',
       kind: 'peloton-scraper',
       mediaKind: 'video',
-      displayName: 'Peloton',
-      ref: `peloton-${Math.random().toString(36).slice(2)}`,
+      displayName: 'Cycling',
+      ref: 'cycling',
       settings,
       db: t.db,
     });
@@ -275,11 +278,21 @@ describe('buildDiscoveryPayload — nested seed + disk merge (embedded PG)', () 
     return { srcId: src.id, runId: run.id, lib, src };
   }
 
+  async function payloadFor(
+    runId: string,
+    src: Awaited<ReturnType<typeof createSource>>,
+    lib: Awaited<ReturnType<typeof createLibrary>>,
+  ) {
+    const payloads = await buildPelotonDiscoveryPayloads(
+      { runId, sources: [src], library: lib },
+      t.db,
+    );
+    expect(payloads).toHaveLength(1);
+    return payloads[0]!;
+  }
+
   it('nests the seed by activity — mixed activities at the same duration stay separate', async () => {
-    const { srcId, runId, lib, src } = await seed({
-      activities: ['cycling', 'cardio', 'bike_bootcamp'],
-      maxClassesPerActivity: 25,
-    });
+    const { srcId, runId, lib, src } = await seed({});
     await mergeEntriesForSource(
       srcId,
       [
@@ -292,7 +305,7 @@ describe('buildDiscoveryPayload — nested seed + disk merge (embedded PG)', () 
       ],
       t.db,
     );
-    const payload = await buildDiscoveryPayload({ runId, source: src, library: lib }, t.db);
+    const payload = await payloadFor(runId, src, lib);
     expect(payload.peloton.episodeNumbering).toEqual({
       cardio: { '30': 222 },
       cycling: { '30': 2150, '45': 176 },
@@ -309,11 +322,7 @@ describe('buildDiscoveryPayload — nested seed + disk merge (embedded PG)', () 
     await mk('Yoga/Someone/S10E3 - x - Bar'); // disk 3 < subs 50
     await mk('Cardio/Emma/S20E5 - x - Baz'); // disk-only (disjoint)
 
-    const { srcId, runId, lib, src } = await seed({
-      activities: ['cycling', 'yoga', 'cardio'],
-      maxClassesPerActivity: 25,
-      diskScanPath: disk,
-    });
+    const { srcId, runId, lib, src } = await seed({ diskScanPath: disk });
     await mergeEntriesForSource(
       srcId,
       [
@@ -323,7 +332,7 @@ describe('buildDiscoveryPayload — nested seed + disk merge (embedded PG)', () 
       ],
       t.db,
     );
-    const payload = await buildDiscoveryPayload({ runId, source: src, library: lib }, t.db);
+    const payload = await payloadFor(runId, src, lib);
     expect(payload.peloton.episodeNumbering).toEqual({
       cycling: { '30': 900, '45': 100 },
       yoga: { '10': 50 },

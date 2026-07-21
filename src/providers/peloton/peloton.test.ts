@@ -2,7 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { validateProvider } from '../../contracts';
 import { assertValidRegistry, getProvider, loadRegistry } from '../../core/registry';
 import { fakeContext } from '../../testing/context';
-import { pelotonProvider, pelotonSettingsSchema, PELOTON_CREDENTIAL_REFRESH_SEC } from './index';
+import {
+  DEFAULT_MAX_CLASSES_PER_ACTIVITY,
+  effectivePelotonCap,
+  pelotonProvider,
+  pelotonSettingsSchema,
+  PELOTON_CREDENTIAL_REFRESH_SEC,
+} from './index';
 import {
   parseDurationMinutes,
   extractClassId,
@@ -66,10 +72,12 @@ describe('pelotonProvider — C1 contract', () => {
     expect(withCreds.status).toBe('warn'); // creds present, no session minted yet
   });
 
-  it('settings schema defaults to the 12 disciplines + the estate scrape profile', () => {
+  it('per-activity settings default to the estate scrape profile; the cap tracks the global default', () => {
     const parsed = pelotonSettingsSchema.parse({});
-    expect(parsed.activities).toHaveLength(12);
-    expect(parsed.maxClassesPerActivity).toBe(25);
+    // No override → the source tracks the GLOBAL default (the owner's caps model).
+    expect(parsed.maxClassesPerActivity).toBeUndefined();
+    expect(effectivePelotonCap(parsed)).toBe(DEFAULT_MAX_CLASSES_PER_ACTIVITY);
+    expect(effectivePelotonCap({ maxClassesPerActivity: 50 })).toBe(50);
     expect(parsed.dynamicScrolling).toBe(true);
     expect(parsed.maxScrolls).toBe(250);
   });

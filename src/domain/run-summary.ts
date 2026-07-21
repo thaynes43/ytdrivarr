@@ -18,8 +18,11 @@ export interface RunSummaryActivity {
   scraped?: number;
   skipped?: number;
   scrolls?: number;
+  /** the activity's effective per-scrape cap, echoed for the console's Cap column. */
+  cap?: number;
   overCap?: boolean;
-  /** true when total === the per-activity cap (donor's ✅ vs ⚠️). */
+  /** the donor's ✅ vs ⚠️ flag. A caller that KNOWS (the report leg compares this scrape's adds
+   * against the cap) passes it precomputed; otherwise total === cap is the fallback rule. */
   atCap?: boolean;
 }
 
@@ -66,6 +69,7 @@ export interface PelotonTelemetry {
     skipped?: number;
     scrolls?: number;
     overCap?: boolean;
+    atCap?: boolean;
     cap?: number;
   }>;
   selectorDriftHits?: number;
@@ -128,10 +132,14 @@ export function buildRunSummary(opts: BuildRunSummaryOptions): RunSummary {
     if (a.skipped !== undefined) activity.skipped = num(a.skipped);
     if (a.scrolls !== undefined) activity.scrolls = num(a.scrolls);
     if (a.overCap !== undefined) activity.overCap = a.overCap;
-    // Donor parity (metrics.py get_pr_summary): ✅ IFF total EXACTLY equals the cap, else ⚠️ —
-    // an over-cap activity renders ⚠️ + **OVER LIMIT**, never ✅.
     const effectiveCap = a.cap !== undefined ? num(a.cap) : cap;
-    if (effectiveCap > 0) activity.atCap = total === effectiveCap;
+    if (effectiveCap > 0) activity.cap = effectiveCap;
+    // Donor parity (metrics.py get_pr_summary): ✅ IFF the cap is exactly hit, else ⚠️ — an
+    // over-cap activity renders ⚠️ + **OVER LIMIT**, never ✅. A caller that knows better (the
+    // report leg compares THIS SCRAPE's adds to the cap, since persisted totals accumulate past
+    // it by design) passes atCap precomputed and wins.
+    if (a.atCap !== undefined) activity.atCap = a.atCap;
+    else if (effectiveCap > 0) activity.atCap = total === effectiveCap;
     return activity;
   });
 

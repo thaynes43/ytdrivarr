@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ytdrivarr · Activity / History (mockup)</title>
+<link rel="stylesheet" href="arr.css">
+</head>
+<body>
+
+<header class="hdr">
+  <svg class="burger" viewBox="0 0 24 24" fill="currentColor"><path d="M3 6h18v2H3zM3 11h18v2H3zM3 16h18v2H3z"/></svg>
+  <div class="brand">
+    <span class="mark"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></span>
+    <span class="word">ytdriv<i>arr</i></span>
+  </div>
+  <div class="search">
+    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M11 4a7 7 0 1 0 4.3 12.5l4.6 4.6 1.4-1.4-4.6-4.6A7 7 0 0 0 11 4zm0 2a5 5 0 1 1 0 10 5 5 0 0 1 0-10z"/></svg>
+    <span>Search</span>
+  </div>
+  <div class="spacer"></div>
+</header>
+
+<div class="shell">
+  <nav class="side">
+    <a><span class="nav-item"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>Sources</span></a>
+    <a><span class="nav-item active"><svg viewBox="0 0 24 24"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg>Activity</span></a>
+    <div class="nav-sub">
+      <a><span class="nav-item active">History</span></a>
+    </div>
+    <a><span class="nav-item"><svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.48.48 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.49.49 0 0 0-.12-.61l-2.01-1.58zM12 15.6a3.6 3.6 0 1 1 0-7.2 3.6 3.6 0 0 1 0 7.2z"/></svg>Settings</span></a>
+    <a><span class="nav-item"><svg viewBox="0 0 24 24"><path d="M20 18c1.1 0 2-.9 2-2V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v10c0 1.1.9 2 2 2H0v2h24v-2h-4zM4 6h16v10H4V6z"/></svg>System</span></a>
+  </nav>
+
+  <main class="main">
+    <div class="toolbar">
+      <div class="tb-group">
+        <span class="tb-btn"><svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.73 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>Run<br>Discovery</span>
+        <span class="tb-btn hide-m"><svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.73 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>Refresh</span>
+      </div>
+      <div class="tb-spacer"></div>
+      <div class="tb-group">
+        <span class="tb-btn hide-m"><svg viewBox="0 0 24 24"><path d="M4 4h4v4H4zM10 4h4v4h-4zM16 4h4v4h-4zM4 10h4v4H4zM10 10h4v4h-4zM16 10h4v4h-4zM4 16h4v4H4zM10 16h4v4h-4zM16 16h4v4h-4z"/></svg>Options</span>
+        <span class="tb-btn"><svg viewBox="0 0 24 24"><path d="M3 4h18l-7 8v6l-4 2v-8L3 4z"/></svg>Filter <span class="caret">▼</span></span>
+      </div>
+      <span class="tb-api"><b>GET</b> /api/v1/runs</span>
+    </div>
+
+    <div class="content">
+      <table class="arr">
+        <thead>
+          <tr>
+            <th style="width:34px"></th>
+            <th>Run</th>
+            <th class="hide-m">Provider</th>
+            <th class="m-trig">Trigger</th>
+            <th class="hide-m">Counts</th>
+            <th class="m-start">Started</th>
+            <th class="num hide-m">Duration</th>
+            <th style="width:34px"></th>
+          </tr>
+        </thead>
+        <tbody>
+
+          <tr>
+            <td class="st" style="text-align:center"><span class="dot running"></span></td>
+            <td><a>Discovery · Cycling</a><div class="m-meta">queued to peloton-worker-0</div></td>
+            <td class="muted hide-m">peloton</td>
+            <td><span class="chip trigger api">api</span></td>
+            <td class="muted hide-m">running…</td>
+            <td class="muted">3m ago</td>
+            <td class="num muted hide-m">-</td>
+            <td class="muted" style="text-align:center"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M7.4 8.6L12 13.2l4.6-4.6L18 10l-6 6-6-6 1.4-1.4z"/></svg></td>
+          </tr>
+
+          <tr>
+            <td class="st" style="text-align:center"><span class="dot ok"></span></td>
+            <td><a>Discovery · All libraries</a><div class="m-meta">daily safety re-emit</div></td>
+            <td class="muted hide-m">youtube</td>
+            <td><span class="chip trigger">cron</span></td>
+            <td class="muted hide-m">0 added · 10 unchanged · 10 emitted</td>
+            <td class="muted">7h ago</td>
+            <td class="num muted hide-m">4s</td>
+            <td class="muted" style="text-align:center"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M7.4 8.6L12 13.2l4.6-4.6L18 10l-6 6-6-6 1.4-1.4z"/></svg></td>
+          </tr>
+
+          <tr class="hovered">
+            <td class="st" style="text-align:center"><span class="dot ok"></span></td>
+            <td><a>Discovery · Peloton library</a><div class="m-meta">nightly scrape</div></td>
+            <td class="muted hide-m">peloton</td>
+            <td><span class="chip trigger">cron</span></td>
+            <td class="muted hide-m">6 added · 3 deduped · 247 emitted</td>
+            <td class="muted">15h ago</td>
+            <td class="num muted hide-m">18m 24s</td>
+            <td class="muted" style="text-align:center"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="transform:rotate(180deg)"><path d="M7.4 8.6L12 13.2l4.6-4.6L18 10l-6 6-6-6 1.4-1.4z"/></svg></td>
+          </tr>
+
+          <tr class="expander hide-m">
+            <td colspan="8">
+              <div class="xp-grid">
+                <div class="xp">
+                  <h4>Changes</h4>
+                  <div class="kv">Subscriptions <b>+6 added</b> · 0 removed · 241 unchanged · 3 deduped · <b>247 emitted</b></div>
+                  <table class="mini">
+                    <thead><tr><th>Activity</th><th>Existing</th><th>Added</th><th>Total</th><th>Cap</th><th></th></tr></thead>
+                    <tbody>
+                      <tr><td>Bike Bootcamp</td><td>25</td><td>0</td><td>25</td><td>25</td><td class="flag">at cap</td></tr>
+                      <tr><td>Cardio</td><td>14</td><td>0</td><td>14</td><td>25</td><td class="tick">ok</td></tr>
+                      <tr><td>Cycling</td><td>23</td><td>2</td><td>25</td><td>25</td><td class="flag">at cap</td></tr>
+                      <tr><td>Meditation</td><td>18</td><td>0</td><td>18</td><td>25</td><td class="tick">ok</td></tr>
+                      <tr><td>Row Bootcamp</td><td>11</td><td>1</td><td>12</td><td>25</td><td class="tick">ok</td></tr>
+                      <tr><td>Rowing</td><td>21</td><td>0</td><td>21</td><td>25</td><td class="tick">ok</td></tr>
+                      <tr><td>Running</td><td>23</td><td>2</td><td>25</td><td>25</td><td class="flag">at cap</td></tr>
+                      <tr><td>Strength</td><td>24</td><td>1</td><td>25</td><td>25</td><td class="flag">at cap</td></tr>
+                      <tr><td>Stretching</td><td>16</td><td>0</td><td>16</td><td>25</td><td class="tick">ok</td></tr>
+                      <tr><td>Tread Bootcamp</td><td>22</td><td>0</td><td>22</td><td>25</td><td class="tick">ok</td></tr>
+                      <tr><td>Walking</td><td>19</td><td>0</td><td>19</td><td>25</td><td class="tick">ok</td></tr>
+                      <tr><td>Yoga</td><td>25</td><td>0</td><td>25</td><td>25</td><td class="flag">at cap</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+                <div class="xp">
+                  <h4>Health</h4>
+                  <div class="kv">Login <b class="tick">ok</b> · bearer captured on attempt 1</div>
+                  <div class="kv">Bearer minted <b>22:03</b> (fresh at run time)</div>
+                  <div class="kv">Scrolls performed <b>178</b> · scroll timeouts 0</div>
+                  <div class="kv">Selector-drift hits <b>0</b></div>
+                  <h4 style="margin-top:16px">Issues</h4>
+                  <div class="kv muted">None.</div>
+                  <div class="kv" style="margin-top:16px"><a>Log excerpt</a> · <a>GET /api/v1/runs/1f6c…</a></div>
+                </div>
+              </div>
+            </td>
+          </tr>
+
+          <tr class="expander m-only">
+            <td colspan="5">
+              <div class="xp-grid">
+                <div class="xp">
+                  <h4>Changes</h4>
+                  <div class="kv">Subscriptions <b>+6 added</b> · 0 removed · 241 unchanged · 3 deduped · <b>247 emitted</b></div>
+                  <table class="mini">
+                    <thead><tr><th>Activity</th><th>Existing</th><th>Added</th><th>Total</th><th>Cap</th><th></th></tr></thead>
+                    <tbody>
+                      <tr><td>Bike Bootcamp</td><td>25</td><td>0</td><td>25</td><td>25</td><td class="flag">at cap</td></tr>
+                      <tr><td>Cardio</td><td>14</td><td>0</td><td>14</td><td>25</td><td class="tick">ok</td></tr>
+                      <tr><td>Cycling</td><td>23</td><td>2</td><td>25</td><td>25</td><td class="flag">at cap</td></tr>
+                      <tr><td>Meditation</td><td>18</td><td>0</td><td>18</td><td>25</td><td class="tick">ok</td></tr>
+                      <tr><td>Row Bootcamp</td><td>11</td><td>1</td><td>12</td><td>25</td><td class="tick">ok</td></tr>
+                      <tr><td>Rowing</td><td>21</td><td>0</td><td>21</td><td>25</td><td class="tick">ok</td></tr>
+                      <tr><td>Running</td><td>23</td><td>2</td><td>25</td><td>25</td><td class="flag">at cap</td></tr>
+                      <tr><td>Strength</td><td>24</td><td>1</td><td>25</td><td>25</td><td class="flag">at cap</td></tr>
+                      <tr><td>Stretching</td><td>16</td><td>0</td><td>16</td><td>25</td><td class="tick">ok</td></tr>
+                      <tr><td>Tread Bootcamp</td><td>22</td><td>0</td><td>22</td><td>25</td><td class="tick">ok</td></tr>
+                      <tr><td>Walking</td><td>19</td><td>0</td><td>19</td><td>25</td><td class="tick">ok</td></tr>
+                      <tr><td>Yoga</td><td>25</td><td>0</td><td>25</td><td>25</td><td class="flag">at cap</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+                <div class="xp">
+                  <h4>Health</h4>
+                  <div class="kv">Login <b class="tick">ok</b> · bearer captured on attempt 1</div>
+                  <div class="kv">Bearer minted <b>22:03</b> (fresh at run time)</div>
+                  <div class="kv">Scrolls performed <b>178</b> · scroll timeouts 0</div>
+                  <div class="kv">Selector-drift hits <b>0</b></div>
+                  <h4 style="margin-top:16px">Issues</h4>
+                  <div class="kv muted">None.</div>
+                  <div class="kv" style="margin-top:16px"><a>Log excerpt</a> · <a>GET /api/v1/runs/1f6c…</a></div>
+                </div>
+              </div>
+            </td>
+          </tr>
+
+          <tr>
+            <td class="st" style="text-align:center"><span class="dot ok"></span></td>
+            <td><a>Discovery · YouTube library</a><div class="m-meta">re-emit after Source edit</div></td>
+            <td class="muted hide-m">youtube</td>
+            <td><span class="chip trigger edit">edit</span></td>
+            <td class="muted hide-m">1 added · 9 unchanged · 10 emitted</td>
+            <td class="muted">2d ago</td>
+            <td class="num muted hide-m">3s</td>
+            <td class="muted" style="text-align:center"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M7.4 8.6L12 13.2l4.6-4.6L18 10l-6 6-6-6 1.4-1.4z"/></svg></td>
+          </tr>
+
+          <tr>
+            <td class="st" style="text-align:center"><span class="dot warn"></span></td>
+            <td><a>Discovery · Peloton library</a><div class="m-meta">selector drift: Rowing returned 0 tiles</div></td>
+            <td class="muted hide-m">peloton</td>
+            <td><span class="chip trigger">cron</span></td>
+            <td class="muted hide-m">0 added · 235 emitted · 1 drift hit</td>
+            <td class="muted">2d ago</td>
+            <td class="num muted hide-m">21m 07s</td>
+            <td class="muted" style="text-align:center"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M7.4 8.6L12 13.2l4.6-4.6L18 10l-6 6-6-6 1.4-1.4z"/></svg></td>
+          </tr>
+
+          <tr>
+            <td class="st" style="text-align:center"><span class="dot ok"></span></td>
+            <td><a>Discovery · All libraries</a><div class="m-meta">daily safety re-emit</div></td>
+            <td class="muted hide-m">youtube</td>
+            <td><span class="chip trigger">cron</span></td>
+            <td class="muted hide-m">0 added · 10 unchanged · 10 emitted</td>
+            <td class="muted">2d ago</td>
+            <td class="num muted hide-m">4s</td>
+            <td class="muted" style="text-align:center"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M7.4 8.6L12 13.2l4.6-4.6L18 10l-6 6-6-6 1.4-1.4z"/></svg></td>
+          </tr>
+
+          <tr>
+            <td class="st" style="text-align:center"><span class="dot error"></span></td>
+            <td><a>Discovery · Peloton library</a><div class="m-meta">login failed after 3 attempts · run finalized error</div></td>
+            <td class="muted hide-m">peloton</td>
+            <td><span class="chip trigger">cron</span></td>
+            <td class="muted hide-m">-</td>
+            <td class="muted">3d ago</td>
+            <td class="num muted hide-m">2m 41s</td>
+            <td class="muted" style="text-align:center"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M7.4 8.6L12 13.2l4.6-4.6L18 10l-6 6-6-6 1.4-1.4z"/></svg></td>
+          </tr>
+
+          <tr>
+            <td class="st" style="text-align:center"><span class="dot ok"></span></td>
+            <td><a>Discovery · Cycling</a><div class="m-meta">operator run from Sources</div></td>
+            <td class="muted hide-m">peloton</td>
+            <td><span class="chip trigger api">api</span></td>
+            <td class="muted hide-m">2 added · 25 emitted</td>
+            <td class="muted">3d ago</td>
+            <td class="num muted hide-m">6m 02s</td>
+            <td class="muted" style="text-align:center"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M7.4 8.6L12 13.2l4.6-4.6L18 10l-6 6-6-6 1.4-1.4z"/></svg></td>
+          </tr>
+
+        </tbody>
+      </table>
+
+      <div class="t-foot">
+        <span>Total records: 132</span>
+        <span>Filter: All</span>
+      </div>
+    </div>
+  </main>
+</div>
+
+</body>
+</html>

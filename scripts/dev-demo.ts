@@ -17,16 +17,23 @@ import { fileURLToPath } from 'node:url';
 import { bootTestDb } from '../src/testing/db';
 import { createApp } from '../src/api/app';
 import { parseSubscriptionsYaml, deriveMusicEmitPolicy } from '../src/core/import-ytdl-sub';
+import { parsePelotonSubscriptions, applyPelotonImport } from '../src/core/import-peloton';
 import { logger } from '../src/logger';
 
 const KEY = 'demo-key';
 const PORT = 3222;
+/** AUTH_MODE=open boots the keyless (LAN) console experience; default demos the api-key gate. */
+const OPEN = process.env.AUTH_MODE === 'open';
 
 async function main(): Promise<void> {
   const t = await bootTestDb();
   process.env.DATABASE_URL = t.connectionString;
   const projectionRoot = await mkdtemp(join(tmpdir(), 'ytdrivarr-demo-'));
-  const app = createApp({ apiKeys: [KEY], projectionRoot });
+  const app = createApp({
+    apiKeys: [KEY],
+    projectionRoot,
+    ...(OPEN ? { authMode: 'open' as const } : {}),
+  });
 
   const post = (path: string, body: unknown) =>
     app.request(path, {
@@ -73,6 +80,45 @@ async function main(): Promise<void> {
     musicLibraryId: musicLib.id,
     applyPreset: true,
   });
+
+  // The Peloton library at its real grain: the watch-grain import seeds one Source PER ACTIVITY
+  // (bookmark-monitored peers of the channels) with all entries attributed by chip.
+  const pelotonFixture = readFileSync(
+    fileURLToPath(
+      new URL('../src/testing/fixtures/estate-peloton-subscriptions.yaml', import.meta.url),
+    ),
+    'utf8',
+  );
+  await applyPelotonImport(parsePelotonSubscriptions(pelotonFixture), { apiKeyId: 'demo-seed' });
+
+  // A finalized Peloton run WITH the per-activity Changes/Health summary: enqueue via the real
+  // discovery path, then play the worker's claim+report legs (empty scrape = the no-op nightly).
+  await post('/api/v1/runs', { scope: 'all', trigger: 'api' });
+  const claimed = (await (
+    await post('/api/v1/jobs/claim', { worker: 'demo-worker', providerId: 'peloton' })
+  ).json()) as { job: { id: string; payload: { peloton: { activities: string[] } } } | null };
+  if (claimed.job) {
+    const perActivity = claimed.job.payload.peloton.activities.map((activity) => ({
+      activity,
+      linksFound: 80,
+      newEntries: 0,
+      skippedExisting: 80,
+      scrollsPerformed: 4,
+      selectorDrift: false,
+      zeroLinks: false,
+    }));
+    // No session artifacts: the demo pod has no /media volume to deliver a bearer into, and the
+    // console renders the "no bearer minted yet" state honestly.
+    await post(`/api/v1/jobs/${claimed.job.id}/report`, {
+      worker: 'demo-worker',
+      result: {
+        entries: [],
+        telemetry: { perActivity, durationMs: 72000, linksFound: 960 },
+      },
+    });
+  }
+
+  // An in-flight run (queued to the worker) so the console shows a live running row honestly.
   await post('/api/v1/runs', { scope: 'all', trigger: 'api' });
 
   serve({ fetch: app.fetch, port: PORT }, () => {

@@ -70,33 +70,45 @@ config **emission** by preset composition (both `video` and `music` preset famil
 
 ## The operator console
 
-The service serves its own operator/admin console at `/` — dark, thin, and honest, the way the
-\*arr consoles are. It is a hash-routed vanilla-TS SPA (no framework, no extra toolchain — the same
-esbuild that bundles the service builds it) and a **strict view over the REST API**: every byte it
-renders comes from the same endpoints any caller uses, and every page links its API counterpart.
+The service serves its own operator/admin console at `/` — the \*arr design language (dark left
+sidebar with an expanding sub-nav, black header, page-scoped icon toolbar, hairline tables,
+bookmark-as-monitored, the ytdrivarr red accent), responsive from desktop down to a 390px phone.
+It is a hash-routed vanilla-TS SPA (no framework, no extra toolchain — the same esbuild that
+bundles the service builds it) and a **strict view over the REST API**: every byte it renders
+comes from the same endpoints any caller uses, and every page shows its exact API counterpart.
+The approved design record lives in `docs/mockups/` (static HTML + rendered PNGs).
 
-![Sources — the operator grain](docs/screenshots/console-sources.png)
+![Sources — the watch grain](docs/screenshots/console-sources-1440.png)
 
-- **Sources** — the full list across libraries; add/edit/remove/enable at the operator grain.
-  Removal is an inline two-step arm-then-confirm (no browser dialogs); arming deepens color without
-  moving the row.
-- **Libraries** — the emit units: name, kind, player, media root, projection path, preset.
-- **Runs** — discovery/emit history (trigger, scope, status, counts, duration, log excerpt) plus a
-  manual "Run discovery" trigger.
-- **Health** — the `/health` surface: overall status and per-source provider `test()` probes, with
-  credential-age / selector-drift alarms rendered when a provider reports them.
-- **Providers** — the typed registry: id, kind, runtime, declared capabilities, media kinds.
+- **Sources** — WHAT THE SERVICE IS WATCHING: YouTube channels and the twelve per-activity
+  Peloton Sources interleaved as peer rows in one monitored list. The bookmark toggle is
+  monitored (instant PATCH — an unmonitored row's entries persist but leave the next
+  scrape/emit; re-monitoring restores them); Cap is the effective per-scrape cap (a per-source
+  override over the global default 25, edited in the in-row expander); Entries/Last Run/Status
+  fill from the enriched list + `/health`. Removal is an inline two-step arm-then-confirm inside
+  a width-reserved slot — arming deepens color, nothing moves. Add New is the provider-aware
+  form (YouTube URL/handle + library + media kind + genre chip, validated server-side); Import
+  takes an existing `subscriptions.yaml`.
+- **Activity** — the runs ledger, running rows inline; a row expands in place into the owner's
+  **Changes / Health / Issues** summary with the per-activity existing/added/total/cap table.
+- **Settings → Providers** — WHAT IS INTEGRATED: one card per registry entry (runtime,
+  capabilities with negated ones hollow, scheduling, live worker/session state). Providers
+  compile in; watching more of one happens in Sources.
+- **Settings → Libraries / General** — the emit units; the access posture (key COUNT only,
+  never values).
+- **System → Status** — health callouts first (distinct warn/error messages aggregated across
+  sources), then the registry table and the About facts from `/api/v1/system/status`.
 
-![Health — per-source test() probes](docs/screenshots/console-health.png)
+![Activity — the Changes/Health/Issues expander](docs/screenshots/console-activity-1440.png)
 
-Auth is the same single `X-Api-Key` (no user management): the static shell is served openly (it
-carries no data), the console asks for the key once and keeps it in `localStorage` (the service is
-LAN-only by design), and any 401 drops back to key entry. On an `open` (keyless) deployment the
-console probes the API without a key on boot and, when it answers, skips the key screen entirely —
-straight to Sources, exactly like opening Sonarr on the LAN.
+Access follows the deployment (D-21): with `AUTH_MODE=open` (a LAN-only ingress) the console is
+keyless — it probes the API without a key on boot and goes straight to Sources, exactly like
+opening Sonarr on the LAN; `X-Api-Key` remains for API clients. On an `api-key` deployment the
+key screen guards entry and any 401 returns to it.
 
 Console dev loop: `pnpm build:console` rebuilds the assets; `pnpm dev:demo` boots the API over an
-embedded Postgres with a small seeded dataset on http://localhost:3222 (key `demo-key`).
+embedded Postgres with a seeded dataset (channels + the twelve Peloton activities + real runs) on
+http://localhost:3222 (key `demo-key`; `AUTH_MODE=open pnpm dev:demo` for the keyless experience).
 
 ## Quickstart
 

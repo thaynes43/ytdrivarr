@@ -23,13 +23,19 @@ import { projectLibrary, resolveProjectionDir } from './projection';
 import { getLibrary } from '../domain/libraries';
 import { listSourcesForLibrary } from '../domain/sources';
 import {
+  countEntriesBySource,
   listEntriesForSource,
   loadPublishedNumbering,
   mergeEntriesForSource,
 } from '../domain/entries';
 import { finishRun } from '../domain/runs';
 import { buildRunSummary, renderRunSummaryMarkdown, runSummaryToJson } from '../domain/run-summary';
-import { PELOTON_SESSION_KEY } from '../providers/peloton';
+import {
+  effectivePelotonCap,
+  pelotonSettingsSchema,
+  PELOTON_SESSION_KEY,
+} from '../providers/peloton';
+import { activitySlugFromChip } from '../providers/peloton/folder-mapping';
 import type { DiscoveryPayload } from './jobs';
 
 /**
@@ -105,22 +111,56 @@ export async function reportJob(input: ReportJobInput): Promise<ReportJobOutcome
   }
   const library = await getLibrary(libraryId, d);
   if (!library) throw new NotFoundError('library', libraryId);
+  const sources = await listSourcesForLibrary(libraryId, d);
 
   // 1) validate the reported entries.
   const validated = input.result.entries.map((e) => subscriptionEntrySchema.parse(e));
 
-  // 2) MERGE (not replace), preserving immutable published numbering. The donor-parity title
-  //    guard runs first: a re-aired class under an already-bound (chip, displayName) is skipped,
-  //    exactly as the donor scraper skipped re-aired titles (a second same-title row could never
-  //    surface in the projection anyway — the emitted YAML map keys by title).
-  const existingRows = await listEntriesForSource(sourceId, d);
-  const titleGuard = dropTitleCollisions(
-    validated,
-    existingRows.map((row) => rowToEntry(row)),
-  );
-  const published = await loadPublishedNumbering(sourceId, d);
-  const numbered = preservePublishedNumbering(titleGuard.kept, published);
-  const merged = await mergeEntriesForSource(sourceId, numbered, d);
+  // 2) ROUTE each entry to its per-activity Source by chip (the watch-grain model, migration
+  //    0002), then MERGE (not replace) per Source, preserving immutable published numbering.
+  //    Routing precedence: the library's per-activity sources by ref (covers even a pre-split
+  //    payload reported after the migration), overlaid with the payload's own
+  //    `sourceIdsByActivity` map; an entry whose chip resolves to no known activity falls back
+  //    to the payload's anchor `sourceId` — exactly the pre-split behavior.
+  //    The donor-parity title guard runs per target: a re-aired class under an already-bound
+  //    (chip, displayName) is skipped, exactly as the donor scraper skipped re-aired titles (a
+  //    second same-title row could never surface in the projection anyway — the emitted YAML
+  //    map keys by title).
+  const routing = new Map<string, string>();
+  for (const source of sources) {
+    if (source.providerId === job.providerId) routing.set(source.ref, source.id);
+  }
+  for (const [slug, id] of Object.entries(payload.sourceIdsByActivity ?? {})) {
+    routing.set(slug, id);
+  }
+  const partitions = new Map<string, SubscriptionEntry[]>();
+  for (const entry of validated) {
+    const slug = activitySlugFromChip(entry.chip);
+    const target = (slug !== undefined ? routing.get(slug) : undefined) ?? sourceId;
+    const bucket = partitions.get(target);
+    if (bucket) bucket.push(entry);
+    else partitions.set(target, [entry]);
+  }
+
+  // Pre-merge per-source tallies — the per-activity Changes rows compare against these.
+  const preCounts = await countEntriesBySource(d);
+
+  const merged = { added: 0, updated: 0, total: 0 };
+  let titleCollisionsDropped = 0;
+  for (const [targetSourceId, bucket] of partitions) {
+    const existingRows = await listEntriesForSource(targetSourceId, d);
+    const titleGuard = dropTitleCollisions(
+      bucket,
+      existingRows.map((row) => rowToEntry(row)),
+    );
+    titleCollisionsDropped += titleGuard.dropped;
+    const published = await loadPublishedNumbering(targetSourceId, d);
+    const numbered = preservePublishedNumbering(titleGuard.kept, published);
+    const result = await mergeEntriesForSource(targetSourceId, numbered, d);
+    merged.added += result.added;
+    merged.updated += result.updated;
+    merged.total += result.total;
+  }
 
   // 3) deliver the session artifacts + record the mint time (the credential-age alarm, D-10).
   let credential: { bearer: boolean; cookies: boolean } | undefined;
@@ -143,20 +183,29 @@ export async function reportJob(input: ReportJobInput): Promise<ReportJobOutcome
 
   // 4) recompose the whole library from ALL persisted entries, apply the donor-parity emit window
   //    (entry-grain providers only — stale classes drop from the FILE, their ledger rows + immutable
-  //    numbering stay), and atomically project. The window map carries each row's first-seen
-  //    (createdAt) + whether its provider opts in, built where the source's provider is known.
+  //    numbering stay), and atomically project. An UNMONITORED (enabled=false) source's entries
+  //    stay in the database but are EXCLUDED here — that is exactly what unmonitoring an activity
+  //    removes from the projection, and what re-monitoring restores. `merged.total` is recomputed
+  //    across the provider's sources so the Run's `entries` count spans every activity (the
+  //    LEDGER, not the windowed file), and the window map carries each row's first-seen
+  //    (createdAt) + whether its provider opts in.
   const emitWindowDays = input.emitWindowDays ?? DEFAULT_EMIT_WINDOW_DAYS;
-  const sources = await listSourcesForLibrary(libraryId, d);
   const libraryEntries: SubscriptionEntry[] = [];
   const windowMeta = new Map<string, EntryWindowMeta>();
+  const postCounts = new Map<string, number>();
+  merged.total = 0;
   for (const source of sources) {
-    if (!source.enabled) continue;
-    const windowed = getProvider(source.providerId).emitWindow === true;
     const rows = await listEntriesForSource(source.id, d);
+    postCounts.set(source.id, rows.length);
+    if (source.providerId === job.providerId || source.id === sourceId) {
+      merged.total += rows.length;
+    }
+    if (!source.enabled) continue;
+    const providerWindowed = getProvider(source.providerId).emitWindow === true;
     for (const row of rows) {
       libraryEntries.push(rowToEntry(row));
       if (!windowMeta.has(row.entryKey)) {
-        windowMeta.set(row.entryKey, { firstSeenAt: row.createdAt, windowed });
+        windowMeta.set(row.entryKey, { firstSeenAt: row.createdAt, windowed: providerWindowed });
       }
     }
   }
@@ -175,13 +224,66 @@ export async function reportJob(input: ReportJobInput): Promise<ReportJobOutcome
   await projectLibrary(dir, emitted);
 
   // 5) finalize the Run with counts + telemetry + the owner summary, and mark the job done.
-  const telemetry = input.result.telemetry ?? {};
+  //    The watch-grain split makes the per-activity Changes breakdown a CORE fact: each activity
+  //    Source's pre/post entry counts give existing/added/total, the worker's raw `perActivity`
+  //    telemetry contributes scraped/skipped/scrolls, and at-cap compares THIS SCRAPE's adds
+  //    against the activity's effective cap (persisted totals accumulate past the cap by design).
+  //    Composed only when the worker did not send `activities` itself (it never has to).
+  const telemetry: Record<string, unknown> = { ...(input.result.telemetry ?? {}) };
+  if (telemetry.activities === undefined) {
+    const rawPerActivity = new Map<string, Record<string, unknown>>();
+    const perActivity = telemetry.perActivity;
+    if (Array.isArray(perActivity)) {
+      for (const row of perActivity) {
+        if (
+          row &&
+          typeof row === 'object' &&
+          typeof (row as { activity?: unknown }).activity === 'string'
+        ) {
+          rawPerActivity.set(
+            (row as { activity: string }).activity,
+            row as Record<string, unknown>,
+          );
+        }
+      }
+    }
+    const providerSources = sources
+      .filter((s) => s.providerId === job.providerId)
+      .sort((a, b) => a.displayName.localeCompare(b.displayName));
+    if (providerSources.length > 0) {
+      telemetry.activities = providerSources.map((source) => {
+        const pre = preCounts.get(source.id) ?? 0;
+        const post = postCounts.get(source.id) ?? pre;
+        const raw = rawPerActivity.get(source.ref);
+        const parsed = pelotonSettingsSchema.safeParse(source.settings);
+        const cap = effectivePelotonCap(parsed.success ? parsed.data : {});
+        const added = Math.max(0, post - pre);
+        const numOr = (v: unknown): number | undefined => (typeof v === 'number' ? v : undefined);
+        return {
+          activity: source.displayName,
+          existing: pre,
+          added,
+          total: post,
+          ...(numOr(raw?.linksFound) !== undefined ? { scraped: numOr(raw?.linksFound) } : {}),
+          ...(numOr(raw?.skippedExisting) !== undefined
+            ? { skipped: numOr(raw?.skippedExisting) }
+            : {}),
+          ...(numOr(raw?.scrollsPerformed) !== undefined
+            ? { scrolls: numOr(raw?.scrollsPerformed) }
+            : {}),
+          cap,
+          atCap: added === cap,
+          overCap: added > cap,
+        };
+      });
+    }
+  }
   const counts: Record<string, number> = {
     discovered: validated.length,
     added: merged.added,
     updated: merged.updated,
     deduped: libraryEntries.length - deduped.length,
-    titleCollisions: titleGuard.dropped,
+    titleCollisions: titleCollisionsDropped,
     windowedOut: windowed.dropped,
     emitted: windowed.emitted.length,
     entries: merged.total,
@@ -207,6 +309,7 @@ export async function reportJob(input: ReportJobInput): Promise<ReportJobOutcome
       telemetry,
       summary: runSummaryToJson(summary),
       logExcerpt: renderRunSummaryMarkdown(summary),
+      providerId: job.providerId,
       db: d,
     });
   }

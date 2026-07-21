@@ -1,5 +1,7 @@
 /** Small DOM helpers — the console is vanilla TS on purpose (a thin operator view, no framework). */
 
+import { ICONS, type IconName } from './icons';
+
 type Child = Node | string | null | undefined;
 
 export function el<K extends keyof HTMLElementTagNameMap>(
@@ -26,29 +28,34 @@ export function el<K extends keyof HTMLElementTagNameMap>(
   return node;
 }
 
-/** A status pill. Recolors by status class; never resizes on change. */
-export function badge(status: string, label?: string): HTMLElement {
-  return el('span', { class: `badge badge-${status}` }, label ?? status);
+/** An inline SVG icon from the shared path set (fill = currentColor; the CSS sizes it). */
+export function icon(name: IconName): SVGSVGElement {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('aria-hidden', 'true');
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  path.setAttribute('d', ICONS[name]);
+  svg.append(path);
+  return svg;
+}
+
+/** The *arr status dot. Recolors by status class; fixed size, never moves a neighbor. */
+export function statusDot(status: string, title?: string): HTMLElement {
+  const node = el('span', { class: `dot ${status}` });
+  if (title) node.title = title;
+  node.setAttribute('role', 'img');
+  node.setAttribute('aria-label', title ?? status);
+  return node;
 }
 
 /** A mediaKind chip (video | music). */
 export function kindChip(kind: string): HTMLElement {
-  return el('span', { class: `chip chip-${kind}` }, kind);
+  return el('span', { class: `chip kind-${kind}` }, kind);
 }
 
-/**
- * Every list links to its API counterpart for operator debugging (D-20: the console is a thin
- * view over the same REST API; when in doubt, curl the same surface).
- */
-export function apiLink(path: string): HTMLElement {
-  return el(
-    'span',
-    { class: 'api-link' },
-    'API: ',
-    el('a', { href: path, target: '_blank', rel: 'noreferrer' }, el('code', {}, path)),
-    ' · ',
-    el('a', { href: '/openapi.json', target: '_blank', rel: 'noreferrer' }, 'OpenAPI'),
-  );
+/** A run-trigger chip (cron | api | edit). */
+export function triggerChip(trigger: string): HTMLElement {
+  return el('span', { class: `chip trigger ${trigger}` }, trigger);
 }
 
 /** An honest empty state — never fake rows. */
@@ -66,19 +73,6 @@ export function errorBanner(err: unknown): HTMLElement {
   return el('div', { class: 'error-banner' }, message);
 }
 
-export function pageHeader(
-  title: string,
-  apiPath: string,
-  ...actions: (Node | null)[]
-): HTMLElement {
-  return el(
-    'header',
-    { class: 'page-header' },
-    el('div', { class: 'page-title-row' }, el('h1', {}, title), ...actions),
-    apiLink(apiPath),
-  );
-}
-
 export function formatDate(iso: string | null): string {
   if (!iso) return '—';
   const d = new Date(iso);
@@ -91,6 +85,28 @@ export function formatDate(iso: string | null): string {
     minute: '2-digit',
     second: '2-digit',
   });
+}
+
+/** Sonarr-style relative age (`9h ago`, `2d ago`); sub-minute rounds to `just now`. */
+export function relTime(iso: string | null, now: number = Date.now()): string {
+  if (!iso) return '—';
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return iso;
+  const sec = Math.floor((now - t) / 1000);
+  if (sec < 60) return 'just now';
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const day = Math.floor(hr / 24);
+  return `${day}d ago`;
+}
+
+/** Humanize the simple daily `M H * * *` cron shape to `HH:MM`; anything else passes through. */
+export function humanCron(expr: string): string {
+  const match = /^(\d{1,2}) (\d{1,2}) \* \* \*$/.exec(expr.trim());
+  if (!match) return expr;
+  return `${String(match[2]).padStart(2, '0')}:${String(match[1]).padStart(2, '0')}`;
 }
 
 export function formatDuration(startedAt: string, finishedAt: string | null): string {

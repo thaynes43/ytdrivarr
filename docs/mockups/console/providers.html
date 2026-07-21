@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ytdrivarr · Settings / Providers (mockup)</title>
+<link rel="stylesheet" href="arr.css">
+</head>
+<body>
+
+<header class="hdr">
+  <svg class="burger" viewBox="0 0 24 24" fill="currentColor"><path d="M3 6h18v2H3zM3 11h18v2H3zM3 16h18v2H3z"/></svg>
+  <div class="brand">
+    <span class="mark"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></span>
+    <span class="word">ytdriv<i>arr</i></span>
+  </div>
+  <div class="search">
+    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M11 4a7 7 0 1 0 4.3 12.5l4.6 4.6 1.4-1.4-4.6-4.6A7 7 0 0 0 11 4zm0 2a5 5 0 1 1 0 10 5 5 0 0 1 0-10z"/></svg>
+    <span>Search</span>
+  </div>
+  <div class="spacer"></div>
+</header>
+
+<div class="shell">
+  <nav class="side">
+    <a><span class="nav-item"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>Sources</span></a>
+    <a><span class="nav-item"><svg viewBox="0 0 24 24"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg>Activity</span></a>
+    <a><span class="nav-item active"><svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.48.48 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.49.49 0 0 0-.12-.61l-2.01-1.58zM12 15.6a3.6 3.6 0 1 1 0-7.2 3.6 3.6 0 0 1 0 7.2z"/></svg>Settings</span></a>
+    <div class="nav-sub">
+      <a><span class="nav-item active">Providers</span></a>
+      <a><span class="nav-item">Libraries</span></a>
+      <a><span class="nav-item">General</span></a>
+    </div>
+    <a><span class="nav-item"><svg viewBox="0 0 24 24"><path d="M20 18c1.1 0 2-.9 2-2V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v10c0 1.1.9 2 2 2H0v2h24v-2h-4zM4 6h16v10H4V6z"/></svg>System</span></a>
+  </nav>
+
+  <main class="main">
+    <div class="toolbar">
+      <div class="tb-group">
+        <span class="tb-btn"><svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm-2 15l-5-5 1.4-1.4L10 14.2l7.6-7.6L19 8l-9 9z"/></svg>Test All</span>
+      </div>
+      <div class="tb-spacer"></div>
+      <span class="tb-api"><b>GET</b> /api/v1/providers</span>
+    </div>
+
+    <div class="content">
+      <div class="section-h">Providers</div>
+      <p class="hint">The typed registry: one entry per integration. Providers compile into the service; Sources pick one and set what it watches.</p>
+
+      <div class="cards">
+
+        <div class="card">
+          <div class="c-head">
+            <h3>YouTube</h3>
+            <span class="chip rt">in core</span>
+            <span class="dot ok"></span>
+          </div>
+          <div class="c-sub">id youtube · kind youtube-url-list · state ns youtube</div>
+          <div class="c-row"><span class="k">Media kinds</span><span><span class="chip kind-video">video</span> <span class="chip kind-music">music</span></span></div>
+          <div class="c-row"><span class="k">Capabilities</span><span>
+            <span class="cap on">remediation</span>
+            <span class="cap off">auth</span>
+            <span class="cap off">scrape</span>
+            <span class="cap off">tokenMint</span>
+            <span class="cap off">assets</span>
+          </span></div>
+          <div class="c-row"><span class="k">Scheduling</span><span>Event-driven: re-emit on Source edit · daily safety re-emit 04:30</span></div>
+          <div class="c-row"><span class="k">In use by</span><span>10 sources · 2 libraries</span></div>
+          <div class="c-status"><span class="dot ok"></span><span>Healthy · all channel and playlist refs valid</span><span class="muted" style="margin-left:auto">checked 12s ago</span></div>
+          <div class="c-actions"><span class="btn">Test</span></div>
+        </div>
+
+        <div class="card">
+          <div class="c-head">
+            <h3>Peloton</h3>
+            <span class="chip rt oop">out of process</span>
+            <span class="dot warn"></span>
+          </div>
+          <div class="c-sub">id peloton · kind peloton-scraper · state ns peloton</div>
+          <div class="c-row"><span class="k">Media kinds</span><span><span class="chip kind-video">video</span></span></div>
+          <div class="c-row"><span class="k">Capabilities</span><span>
+            <span class="cap on">auth</span>
+            <span class="cap on">scrape</span>
+            <span class="cap on">tokenMint</span>
+            <span class="cap on">assets</span>
+            <span class="cap on">remediation</span>
+          </span></div>
+          <div class="c-row"><span class="k">Scheduling</span><span>Nightly scrape 22:00 · bearer refresh SLA 6h</span></div>
+          <div class="c-row"><span class="k">Worker</span><span><span class="dot ok" style="width:8px;height:8px"></span> peloton-worker-0 · heartbeat 42s ago</span></div>
+          <div class="c-row"><span class="k">Session</span><span><span class="dot warn" style="width:8px;height:8px"></span> bearer minted 7.2h ago (SLA 6h) · re-mint due</span></div>
+          <div class="c-row"><span class="k">Secrets</span><span class="muted">PELOTON_USERNAME · PELOTON_PASSWORD · present (injected)</span></div>
+          <div class="c-row"><span class="k">In use by</span><span>12 sources (one per activity) · 1 library</span></div>
+          <div class="c-status"><span class="dot warn"></span><span>Credentials present · bearer past its freshness SLA</span><span class="muted" style="margin-left:auto">checked 12s ago</span></div>
+          <div class="c-actions"><span class="btn">Test</span></div>
+        </div>
+
+      </div>
+
+      <p class="hint" style="margin-top:18px">Providers cannot be added or removed here: the registry is compiled in. Watching more of a provider happens in Sources.</p>
+    </div>
+  </main>
+</div>
+
+</body>
+</html>

@@ -7,6 +7,8 @@
 
 export type MediaKind = 'video' | 'music';
 
+export type RunStatus = 'running' | 'ok' | 'warn' | 'error';
+
 export interface LibraryDto {
   id: string;
   name: string;
@@ -36,6 +38,48 @@ export interface SourceDto {
   capsContext: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
+  // additive console-facing enrichment (present on list/get responses)
+  entryCount?: number;
+  effectiveCap?: number | null;
+  lastRunAt?: string | null;
+  lastRunStatus?: RunStatus | null;
+}
+
+/** The structured Changes/Health/Issues summary a finalized Run carries (D-10). */
+export interface RunSummaryActivityDto {
+  activity: string;
+  existing: number;
+  added: number;
+  total: number;
+  scraped?: number;
+  skipped?: number;
+  scrolls?: number;
+  cap?: number;
+  overCap?: boolean;
+  atCap?: boolean;
+}
+
+export interface RunSummaryDto {
+  changes?: {
+    subscriptionsAdded?: number;
+    subscriptionsRemoved?: number;
+    subscriptionsUnchanged?: number;
+    skipped?: number;
+    deduped?: number;
+    entriesEmitted?: number;
+    activities?: RunSummaryActivityDto[];
+  };
+  health?: {
+    authOk?: boolean | null;
+    loginOk?: boolean | null;
+    bearerMintedAt?: string | null;
+    bearerAgeSec?: number | null;
+    credentialRefreshSec?: number | null;
+    credentialAgeStatus?: string;
+    scrollsPerformed?: number | null;
+    selectorDriftHits?: number;
+  };
+  issues?: string[];
 }
 
 export interface RunDto {
@@ -44,10 +88,10 @@ export interface RunDto {
   scopeRef: string | null;
   trigger: 'cron' | 'api' | 'edit';
   providerId: string | null;
-  status: 'running' | 'ok' | 'warn' | 'error';
+  status: RunStatus;
   counts: Record<string, number>;
   telemetry: Record<string, unknown>;
-  summary: Record<string, unknown> | null;
+  summary: RunSummaryDto | null;
   summaryMarkdown: string | null;
   logExcerpt: string | null;
   startedAt: string;
@@ -61,6 +105,12 @@ export interface ProviderDto {
   capabilities: ('auth' | 'scrape' | 'tokenMint' | 'assets' | 'remediation')[];
   mediaKinds: MediaKind[];
   stateNamespace: string;
+  scheduling?: {
+    mode: 'event_driven' | 'cron';
+    cron?: string;
+    safetyCron?: string;
+    credentialRefreshSec?: number;
+  };
 }
 
 export interface SourceHealthDto {
@@ -71,6 +121,12 @@ export interface SourceHealthDto {
   checkedAt: string;
   credentialAgeSec?: number;
   selectorDriftHits?: number;
+  healthModel?: 'probe' | 'observed';
+  runtime?: 'in_core' | 'out_of_process';
+  lastRunStatus?: RunStatus;
+  lastRunAt?: string;
+  bearerMintedAt?: string;
+  workerLastSeenSec?: number;
 }
 
 export interface HealthDto {
@@ -78,4 +134,27 @@ export interface HealthDto {
   service: 'ytdrivarr';
   providers: ProviderDto[];
   sources: SourceHealthDto[];
+}
+
+export interface SystemStatusDto {
+  service: 'ytdrivarr';
+  version: string;
+  nodeVersion: string;
+  database: { reachable: boolean; migrations: number | null };
+  projectionRoot: string | null;
+  authMode: 'api-key' | 'open';
+  apiKeysConfigured: number;
+  uptimeSec: number;
+  startedAt: string;
+}
+
+export interface ImportSummaryDto {
+  channels: number;
+  video: number;
+  music: number;
+  created: number;
+  updated: number;
+  unchanged: number;
+  presetApplied: boolean;
+  presetNames: string[];
 }

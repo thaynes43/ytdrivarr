@@ -1,6 +1,12 @@
 import { Hono, type Context } from 'hono';
 import { z } from 'zod';
+import { sql } from 'drizzle-orm';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { logger } from '../logger';
+import { resolveDb } from '../db/client';
+import type { Database } from '../db';
+import type { Source } from '../db/schema';
 import { AuthError, ConflictError, NotFoundError, ValidationError } from '../errors';
 import { apiKeyAuth, apiKeyLabel, type AuthMode } from './auth';
 import { buildOpenApiDocument, type OpenApiRoute } from './openapi';
@@ -29,11 +35,20 @@ import {
   reportJobResponse,
   runDto,
   sourceDto,
+  systemStatusDto,
   updateLibraryBody,
   updateSourceBody,
 } from './schemas';
-import { toLibraryDto, toProviderDto, toRemediationJobDto, toRunDto, toSourceDto } from './mappers';
+import {
+  lastRunBySource,
+  toLibraryDto,
+  toProviderDto,
+  toRemediationJobDto,
+  toRunDto,
+  toSourceDto,
+} from './mappers';
 import { getProvider, listProviders } from '../core/registry';
+import { validateYoutubeRef } from '../providers/youtube/ref';
 import { collectHealth } from '../core/health';
 import { runDiscovery } from '../core/discovery';
 import {
@@ -51,7 +66,7 @@ import {
   setSourceEnabled,
   updateSource,
 } from '../domain/sources';
-import { listEntriesForSource } from '../domain/entries';
+import { countEntriesBySource, listEntriesForSource } from '../domain/entries';
 import { parseSubscriptionsYaml, applyYtdlSubImport } from '../core/import-ytdl-sub';
 import { claimJob, failJob, heartbeatJob } from '../core/jobs';
 import { reportJob } from '../core/report';
@@ -131,6 +146,70 @@ async function requireSource(id: string) {
   return src;
 }
 
+/**
+ * Server-side ref validation at add/edit time (the Add-New contract): a YouTube ref must be a
+ * channel/playlist URL or @handle — rejecting here keeps a typo from becoming a Source whose
+ * health dot is born red. Other providers' refs are provider-managed identifiers (a Peloton
+ * activity slug) and pass through.
+ */
+function requireValidRef(providerId: string, ref: string): void {
+  if (providerId !== 'youtube') return;
+  const check = validateYoutubeRef(ref);
+  if (!check.ok) {
+    throw new ValidationError(`invalid youtube ref: ${check.reason ?? 'not a recognized shape'}`);
+  }
+}
+
+/** How many recent runs the last-run-per-source join scans (newest-first; plenty at this scale). */
+const LAST_RUN_SCAN = 200;
+
+/** Enrich source rows with the console-facing columns (entry count, effective cap, last run). */
+async function enrichedSourceDtos(rows: Source[]) {
+  const [entryCounts, recentRuns] = await Promise.all([
+    countEntriesBySource(),
+    listRuns(LAST_RUN_SCAN),
+  ]);
+  const lastRuns = lastRunBySource(rows, recentRuns);
+  return rows.map((row) => {
+    const last = lastRuns.get(row.id);
+    return toSourceDto(row, {
+      entryCount: entryCounts.get(row.id) ?? 0,
+      lastRunAt: last?.at ?? null,
+      lastRunStatus: last?.status ?? null,
+    });
+  });
+}
+
+async function enrichedSourceDto(row: Source) {
+  const dtos = await enrichedSourceDtos([row]);
+  return dtos[0];
+}
+
+/** The applied drizzle migration count + reachability — honest DB facts for System → Status. */
+async function databaseStatus(): Promise<{ reachable: boolean; migrations: number | null }> {
+  try {
+    const d = resolveDb() as Database;
+    const result = await d.execute(
+      sql`select count(*)::int as applied from drizzle.__drizzle_migrations`,
+    );
+    const first = (result.rows as { applied?: number }[])[0];
+    return { reachable: true, migrations: first?.applied ?? null };
+  } catch {
+    return { reachable: false, migrations: null };
+  }
+}
+
+/** The service version, read from the package.json shipped next to the bundle (Dockerfile COPY). */
+async function serviceVersion(): Promise<string> {
+  try {
+    const raw = await readFile(join(process.cwd(), 'package.json'), 'utf8');
+    const parsed = JSON.parse(raw) as { version?: string };
+    return parsed.version ?? 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
 function buildRoutes(opts: CreateAppOptions): RouteDef[] {
   return [
     // --- health (open) ------------------------------------------------------------------------
@@ -161,6 +240,30 @@ function buildRoutes(opts: CreateAppOptions): RouteDef[] {
       auth: true,
       response: z.array(providerDto),
       handler: (c) => json(c, z.array(providerDto), listProviders().map(toProviderDto)),
+    },
+
+    // --- system -------------------------------------------------------------------------------
+    {
+      method: 'get',
+      path: '/api/v1/system/status',
+      summary: 'Service facts for System → Status (version, runtime, DB, auth mode — no secrets)',
+      tags: ['system'],
+      auth: true,
+      response: systemStatusDto,
+      handler: async (c) => {
+        const uptimeSec = Math.floor(process.uptime());
+        return json(c, systemStatusDto, {
+          service: 'ytdrivarr',
+          version: await serviceVersion(),
+          nodeVersion: process.version,
+          database: await databaseStatus(),
+          projectionRoot: opts.projectionRoot ?? null,
+          authMode: opts.authMode ?? 'api-key',
+          apiKeysConfigured: opts.apiKeys.length,
+          uptimeSec,
+          startedAt: new Date(Date.now() - uptimeSec * 1000).toISOString(),
+        });
+      },
     },
 
     // --- libraries ----------------------------------------------------------------------------
@@ -230,11 +333,12 @@ function buildRoutes(opts: CreateAppOptions): RouteDef[] {
     {
       method: 'get',
       path: '/api/v1/sources',
-      summary: 'List sources',
+      summary: 'List sources (enriched with entry counts, effective caps and last-run coverage)',
       tags: ['sources'],
       auth: true,
       response: z.array(sourceDto),
-      handler: async (c) => json(c, z.array(sourceDto), (await listSources()).map(toSourceDto)),
+      handler: async (c) =>
+        json(c, z.array(sourceDto), await enrichedSourceDtos(await listSources())),
     },
     {
       method: 'post',
@@ -256,6 +360,7 @@ function buildRoutes(opts: CreateAppOptions): RouteDef[] {
             settingsCheck.error.issues,
           );
         }
+        requireValidRef(body.providerId, body.ref);
         const source = await createSource({
           libraryId: body.libraryId,
           providerId: body.providerId,
@@ -269,7 +374,7 @@ function buildRoutes(opts: CreateAppOptions): RouteDef[] {
           ...(body.capsContext !== undefined ? { capsContext: body.capsContext } : {}),
           apiKeyId: apiKeyLabel(c),
         });
-        return json(c, sourceDto, toSourceDto(source), 201);
+        return json(c, sourceDto, await enrichedSourceDto(source), 201);
       },
     },
     {
@@ -280,7 +385,8 @@ function buildRoutes(opts: CreateAppOptions): RouteDef[] {
       auth: true,
       request: { params: idParam },
       response: sourceDto,
-      handler: async (c) => json(c, sourceDto, toSourceDto(await requireSource(reqParam(c, 'id')))),
+      handler: async (c) =>
+        json(c, sourceDto, await enrichedSourceDto(await requireSource(reqParam(c, 'id')))),
     },
     {
       method: 'get',
@@ -324,7 +430,18 @@ function buildRoutes(opts: CreateAppOptions): RouteDef[] {
       handler: async (c) => {
         const id = reqParam(c, 'id');
         const body = await parseBody(c, updateSourceBody);
-        await requireSource(id);
+        const existing = await requireSource(id);
+        if (body.settings !== undefined) {
+          const provider = getProvider(existing.providerId);
+          const settingsCheck = provider.settingsSchema.safeParse(body.settings);
+          if (!settingsCheck.success) {
+            throw new ValidationError(
+              'source settings failed the provider schema',
+              settingsCheck.error.issues,
+            );
+          }
+        }
+        if (body.ref !== undefined) requireValidRef(existing.providerId, body.ref);
         const apiKeyId = apiKeyLabel(c);
         if (body.enabled !== undefined) {
           await setSourceEnabled({ id, enabled: body.enabled, apiKeyId });
@@ -338,7 +455,7 @@ function buildRoutes(opts: CreateAppOptions): RouteDef[] {
         if (Object.keys(patch).length > 0) {
           await updateSource({ id, patch, apiKeyId });
         }
-        return json(c, sourceDto, toSourceDto(await requireSource(id)));
+        return json(c, sourceDto, await enrichedSourceDto(await requireSource(id)));
       },
     },
     {
@@ -595,6 +712,17 @@ export function createApp(opts: CreateAppOptions): Hono {
       }),
     ),
   );
+
+  // API responses are LIVE operator state (monitored flags, run status) — never cacheable. A
+  // browser heuristically caching a GET would render yesterday's flags after a PATCH.
+  app.use('/api/*', async (c, next) => {
+    await next();
+    c.header('cache-control', 'no-store');
+  });
+  app.use('/health', async (c, next) => {
+    await next();
+    c.header('cache-control', 'no-store');
+  });
 
   for (const route of routes) {
     const chain = route.auth ? [authMw, route.handler] : [route.handler];

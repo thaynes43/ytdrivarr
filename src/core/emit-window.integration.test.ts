@@ -33,7 +33,16 @@ function countEntries(block: Record<string, Record<string, unknown>>): number {
 describe('emit window — the projected subscriptions.yaml shrinks to the windowed set (embedded PG)', () => {
   let t: TestDb;
   let lib: Library;
-  let src: Source;
+  let pelotonSources: Source[];
+
+  /** every persisted entry across the watch-grain (per-activity) Peloton sources. */
+  async function allEntries() {
+    const rows = [];
+    for (const s of pelotonSources) {
+      rows.push(...(await listEntriesForSource(s.id, t.db)));
+    }
+    return rows;
+  }
 
   beforeAll(async () => {
     t = await bootTestDb();
@@ -41,8 +50,8 @@ describe('emit window — the projected subscriptions.yaml shrinks to the window
     const parsed = parsePelotonSubscriptions(FIXTURE);
     await applyPelotonImport(parsed, { apiKeyId: 'test', db: t.db });
     const sources = await listSources(t.db);
-    src = sources.find((s) => s.providerId === 'peloton') as Source;
-    lib = (await getLibrary(src.libraryId, t.db)) as Library;
+    pelotonSources = sources.filter((s) => s.providerId === 'peloton');
+    lib = (await getLibrary(pelotonSources[0]!.libraryId, t.db)) as Library;
   }, 60_000);
 
   afterAll(async () => {
@@ -54,7 +63,7 @@ describe('emit window — the projected subscriptions.yaml shrinks to the window
     const projectionRoot = await mkdtemp(join(tmpdir(), 'ytdrivarr-window-'));
     const subsPath = join(projectionRoot, lib.projectionPath, 'subscriptions.yaml');
 
-    const seeded = await listEntriesForSource(src.id, t.db);
+    const seeded = await allEntries();
     expect(seeded).toHaveLength(229);
 
     // Back-date every even-episode class 30 days (past the 15-day window). Capture one to prove its
@@ -82,7 +91,7 @@ describe('emit window — the projected subscriptions.yaml shrinks to the window
     expect(windowedCount).toBe(229 - staleCount);
 
     // the ledger row + its immutable numbering survive (windowing is emission-only).
-    const afterRows = await listEntriesForSource(src.id, t.db);
+    const afterRows = await allEntries();
     expect(afterRows).toHaveLength(229);
     const afterStale = afterRows.find((r) => r.entryKey === staleSample.entryKey)!;
     expect(afterStale.episodeNumber).toBe(staleOriginalEpisode);

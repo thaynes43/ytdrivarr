@@ -41,7 +41,8 @@ interface RequestOptions {
 
 export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   const headers: Record<string, string> = { 'x-api-key': getApiKey() ?? '' };
-  const init: RequestInit = { method: opts.method ?? 'GET', headers };
+  // Live operator state: a cached GET would happily render yesterday's monitored flags.
+  const init: RequestInit = { method: opts.method ?? 'GET', headers, cache: 'no-store' };
   if (opts.body !== undefined) {
     headers['content-type'] = 'application/json';
     init.body = JSON.stringify(opts.body);

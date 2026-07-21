@@ -6,3 +6,5 @@ pnpm-lock.yaml
 # ground truth. Must NOT be reformatted or the import/emission shape tests lose their reference.
 src/testing/fixtures/estate-youtube-subscriptions.yaml
 CHANGELOG.md
+# The approved console design record (PR #14) — kept byte-identical to what was reviewed.
+docs/mockups

@@ -1,6 +1,7 @@
 import type { Library, RemediationJob, Run, Source } from '../db/schema';
 import type { SourceProvider } from '../contracts';
 import { renderRunSummaryMarkdown, type RunSummary } from '../domain/run-summary';
+import { effectivePelotonCap, pelotonSettingsSchema } from '../providers/peloton';
 import type { LibraryDto, ProviderDto, RemediationJobDto, RunDto, SourceDto } from './schemas';
 
 export function toLibraryDto(row: Library): LibraryDto {
@@ -20,7 +21,25 @@ export function toLibraryDto(row: Library): LibraryDto {
   };
 }
 
-export function toSourceDto(row: Source): SourceDto {
+/** The console-facing enrichment carried on a source DTO (all optional, computed by the API). */
+export interface SourceEnrichment {
+  entryCount?: number;
+  lastRunAt?: string | null;
+  lastRunStatus?: 'running' | 'ok' | 'warn' | 'error' | null;
+}
+
+/**
+ * The EFFECTIVE cap column value: Peloton sources resolve their per-source override against the
+ * global default; uncapped providers (a YouTube channel) carry null. Settings that fail the
+ * provider schema (never expected post-migration) also resolve to the global default, honestly.
+ */
+export function sourceEffectiveCap(row: Pick<Source, 'providerId' | 'settings'>): number | null {
+  if (row.providerId !== 'peloton') return null;
+  const parsed = pelotonSettingsSchema.safeParse(row.settings);
+  return effectivePelotonCap(parsed.success ? parsed.data : {});
+}
+
+export function toSourceDto(row: Source, enrichment?: SourceEnrichment): SourceDto {
   return {
     id: row.id,
     libraryId: row.libraryId,
@@ -35,7 +54,37 @@ export function toSourceDto(row: Source): SourceDto {
     capsContext: row.capsContext,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
+    ...(enrichment !== undefined
+      ? {
+          entryCount: enrichment.entryCount ?? 0,
+          effectiveCap: sourceEffectiveCap(row),
+          lastRunAt: enrichment.lastRunAt ?? null,
+          lastRunStatus: enrichment.lastRunStatus ?? null,
+        }
+      : {}),
   };
+}
+
+/**
+ * The most recent Run covering each source: scope `all`, its library, or the source itself —
+ * `runs` MUST be sorted most-recent-first (the listRuns order). Pure, so the coverage rule is
+ * unit-testable without a database.
+ */
+export function lastRunBySource(
+  sources: readonly Pick<Source, 'id' | 'libraryId'>[],
+  runs: readonly Pick<Run, 'scope' | 'scopeRef' | 'status' | 'startedAt'>[],
+): Map<string, { at: string; status: 'running' | 'ok' | 'warn' | 'error' }> {
+  const result = new Map<string, { at: string; status: 'running' | 'ok' | 'warn' | 'error' }>();
+  for (const source of sources) {
+    const hit = runs.find(
+      (run) =>
+        run.scope === 'all' ||
+        (run.scope === 'library' && run.scopeRef === source.libraryId) ||
+        (run.scope === 'source' && run.scopeRef === source.id),
+    );
+    if (hit) result.set(source.id, { at: hit.startedAt.toISOString(), status: hit.status });
+  }
+  return result;
 }
 
 export function toRunDto(row: Run): RunDto {
@@ -81,5 +130,20 @@ export function toProviderDto(provider: SourceProvider): ProviderDto {
     capabilities: [...provider.capabilities],
     mediaKinds: [...provider.mediaKinds],
     stateNamespace: provider.stateNamespace,
+    scheduling:
+      provider.scheduling.mode === 'cron'
+        ? {
+            mode: 'cron',
+            cron: provider.scheduling.cron,
+            ...(provider.scheduling.credentialRefreshSec !== undefined
+              ? { credentialRefreshSec: provider.scheduling.credentialRefreshSec }
+              : {}),
+          }
+        : {
+            mode: 'event_driven',
+            ...(provider.scheduling.safetyCron !== undefined
+              ? { safetyCron: provider.scheduling.safetyCron }
+              : {}),
+          },
   };
 }

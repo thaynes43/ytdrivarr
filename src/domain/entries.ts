@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { count, eq } from 'drizzle-orm';
 import { subscriptionEntries, type SubscriptionEntryRow } from '../db/schema';
 import { inTransaction, resolveDb } from '../db/client';
 import type { Database, DbClient } from '../db';
@@ -63,6 +63,16 @@ export async function listEntriesForSource(
 ): Promise<SubscriptionEntryRow[]> {
   const d = resolveDb(exec) as Database;
   return d.select().from(subscriptionEntries).where(eq(subscriptionEntries.sourceId, sourceId));
+}
+
+/** Per-source entry tallies in one grouped query — the console Sources table's Entries column. */
+export async function countEntriesBySource(exec?: DbClient): Promise<Map<string, number>> {
+  const d = resolveDb(exec) as Database;
+  const rows = await d
+    .select({ sourceId: subscriptionEntries.sourceId, entries: count() })
+    .from(subscriptionEntries)
+    .groupBy(subscriptionEntries.sourceId);
+  return new Map(rows.map((r) => [r.sourceId, Number(r.entries)]));
 }
 
 export interface MergeEntriesResult {
