@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.3.1](https://github.com/thaynes43/ytdrivarr/compare/v0.3.0...v0.3.1) (2026-07-21)
+
+
+### Bug Fixes
+
+* **core:** bind each projected title to one entry — re-aired class dedup (donor parity) ([#11](https://github.com/thaynes43/ytdrivarr/issues/11)) ([9d73e15](https://github.com/thaynes43/ytdrivarr/commit/9d73e15823dcf4225091c16c0fac05d06be66c50))
+* **core:** out_of_process health derives from observed state, not env creds ([#12](https://github.com/thaynes43/ytdrivarr/issues/12)) ([1ed8113](https://github.com/thaynes43/ytdrivarr/commit/1ed8113ac0a389700ccf8baa391d5a811ed855be))
+* **worker:** survive login-form hydration stale-element races ([#9](https://github.com/thaynes43/ytdrivarr/issues/9)) ([aaaca02](https://github.com/thaynes43/ytdrivarr/commit/aaaca027ce9bcc57f30caf71c87104a3c8d01741))
+
 ## [0.3.0](https://github.com/thaynes43/ytdrivarr/compare/v0.2.0...v0.3.0) (2026-07-21)
 
 
