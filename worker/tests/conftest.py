@@ -50,12 +50,18 @@ class FakeElement:
         return list(kids) if isinstance(kids, list) else [kids]
 
     def send_keys(self, keys):
+        if self.stale:
+            raise StaleElementReferenceException("stale")
         self.sent_keys.append(keys)
 
     def clear(self):
+        if self.stale:
+            raise StaleElementReferenceException("stale")
         self.cleared = True
 
     def click(self):
+        if self.stale:
+            raise StaleElementReferenceException("stale")
         if self._on_click:
             self._on_click()
 

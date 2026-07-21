@@ -145,3 +145,51 @@ def test_login_polls_for_late_field(no_sleep):
     assert result.outcome is LoginOutcome.OK
     assert calls["n"] >= 3  # it polled multiple times
     assert no_sleep.calls == []
+
+
+def test_login_recovers_from_hydration_stale(no_sleep):
+    # The page hydrates and REPLACES the form right after first paint (observed live
+    # 2026-07-21: StaleElementReferenceException on every claim): the first-found username
+    # field goes stale before clear() lands. The interaction loop must re-find fresh
+    # post-hydration nodes and succeed WITHOUT burning a whole login attempt.
+    d = make_login_driver()
+    stale_field = FakeElement(stale=True)
+    fresh = d._fields["user"]
+    finds = {"n": 0}
+    real_handler = d.find_element_handler
+
+    def hydration(by, value):
+        if by == By.NAME and value == "usernameOrEmail":
+            finds["n"] += 1
+            # find 1 (pre-interaction wait) and find 2 (loop try 1) return the node that
+            # hydration then replaces; find 3+ return the stable post-hydration node.
+            return stale_field if finds["n"] <= 2 else fresh
+        return real_handler(by, value)
+
+    d.find_element_handler = hydration
+    login = PelotonLogin(sleep=no_sleep, **FAST)
+    result = login.login(d, "alice@example.com", "s3cret")
+    assert result.outcome is LoginOutcome.OK
+    assert fresh.sent_keys == ["alice@example.com"]
+    # exactly one stale-settle pause, and NO login-level retry backoff
+    assert no_sleep.calls == [login.stale_settle]
+
+
+def test_login_stale_exhaustion_is_retryable_timeout(no_sleep):
+    # Every re-find returns a node that is stale by interaction time -> the attempt
+    # returns a RETRYABLE timeout (the outer login() backoff engages), never a crash.
+    d = make_login_driver()
+    always_stale = FakeElement(stale=True)
+    real_handler = d.find_element_handler
+
+    def stale_forever(by, value):
+        if by == By.NAME and value == "usernameOrEmail":
+            return always_stale
+        return real_handler(by, value)
+
+    d.find_element_handler = stale_forever
+    login = PelotonLogin(sleep=no_sleep, **FAST)
+    result = login.login(d, "u", "p")
+    assert result.outcome is LoginOutcome.TIMEOUT
+    assert result.retryable is True
+    assert "stale" in result.detail.lower()
