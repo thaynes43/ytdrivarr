@@ -50,6 +50,7 @@ import {
 import { getProvider, listProviders } from '../core/registry';
 import { validateYoutubeRef } from '../providers/youtube/ref';
 import { collectHealth } from '../core/health';
+import { metricsExposition } from '../core/metrics';
 import { runDiscovery } from '../core/discovery';
 import {
   createLibrary,
@@ -700,6 +701,19 @@ export function createApp(opts: CreateAppOptions): Hono {
   const routes = buildRoutes(opts);
 
   app.get('/livez', (c) => c.json({ status: 'ok' }));
+
+  // Prometheus metrics (issue #19 / DESIGN-045 D-10) — the run/discovery + health surface the estate
+  // scrapes and Grafana renders (the #2168 daily-review replacement). Unauthenticated by design: it
+  // carries no secrets, the deploy runs AUTH_MODE=open behind a LAN-only ingress, and Prometheus
+  // scrapes it in-cluster over the Service. Computed from the DB/projected files at scrape time.
+  app.get('/metrics', async (c) => {
+    const body = await metricsExposition({
+      ...(opts.projectionRoot !== undefined ? { projectionRoot: opts.projectionRoot } : {}),
+    });
+    c.header('content-type', 'text/plain; version=0.0.4; charset=utf-8');
+    c.header('cache-control', 'no-store');
+    return c.body(body);
+  });
   // The operator console (D-20): `/` + `/ui/*`. The static shell carries no data — every fetch
   // the SPA makes rides the same X-Api-Key auth as any other API caller (D-21).
   registerConsole(app, opts.consoleDir);
