@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/thaynes43/ytdrivarr/compare/v0.5.0...v0.6.0) (2026-07-21)
+
+
+### Features
+
+* **metrics:** Prometheus /metrics for both providers — the [#2168](https://github.com/thaynes43/ytdrivarr/issues/2168) daily-review surface ([#21](https://github.com/thaynes43/ytdrivarr/issues/21)) ([caf76c3](https://github.com/thaynes43/ytdrivarr/commit/caf76c3b12fff46d2b6e0ef8a1107b1de417ec29))
+
 ## [0.5.0](https://github.com/thaynes43/ytdrivarr/compare/v0.4.0...v0.5.0) (2026-07-21)
 
 
