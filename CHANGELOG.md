@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.0](https://github.com/thaynes43/ytdrivarr/compare/v0.2.0...v0.3.0) (2026-07-21)
+
+
+### Features
+
+* M3 — hardened Peloton plugin port (out-of-process provider, transport, run summaries) ([#7](https://github.com/thaynes43/ytdrivarr/issues/7)) ([33341a5](https://github.com/thaynes43/ytdrivarr/commit/33341a507d22e7a1fd065363cf85c1fa43585eec))
+* M3 Peloton worker (hardened out-of-process Selenium scraper) ([#5](https://github.com/thaynes43/ytdrivarr/issues/5)) ([cb6cabc](https://github.com/thaynes43/ytdrivarr/commit/cb6cabc98ae010c773e8860cd19c4bf944c9b74e))
+
 ## [0.2.0](https://github.com/thaynes43/ytdrivarr/compare/v0.1.0...v0.2.0) (2026-07-21)
 
 ### Features
