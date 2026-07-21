@@ -27,90 +27,16 @@ describe('credentialAgeAlarm — the threshold policy', () => {
   });
 });
 
-describe('collectHealth — per-source alarm enrichment', () => {
-  let t: TestDb;
-
-  beforeAll(async () => {
-    t = await bootTestDb();
-    process.env.DATABASE_URL = t.connectionString;
-  });
-  afterAll(async () => {
-    await t.stop();
-    delete process.env.DATABASE_URL;
-  });
-
-  it('surfaces the credential age for a Peloton source with a minted session', async () => {
-    const lib = await createLibrary({
-      name: 'Peloton',
-      mediaRoot: '/media/peloton',
-      libraryKind: 'video',
-      presetName: 'Plex TV Show by Date',
-      projectionPath: 'peloton',
-      db: t.db,
-    });
-    const src = await createSource({
-      libraryId: lib.id,
-      providerId: 'peloton',
-      kind: 'peloton-scraper',
-      mediaKind: 'video',
-      displayName: 'Peloton',
-      ref: 'peloton',
-      settings: { activities: ['cycling'] },
-      db: t.db,
-    });
-    // a session minted ~50000s ago (> the 21600s SLA → the age is surfaced as an alarm signal).
-    await createStateStore('peloton', t.db).set('session', {
-      mintedAt: new Date(Date.now() - 50000 * 1000).toISOString(),
-    });
-
-    const health = await collectHealth(t.db);
-    const sh = health.sources.find((s) => s.sourceId === src.id);
-    expect(sh?.credentialAgeSec).toBeGreaterThanOrEqual(49000);
-  });
-
-  it('raises a selector-drift WARN from the last run telemetry', async () => {
-    const lib = await createLibrary({
-      name: 'YouTube',
-      mediaRoot: '/media/youtube',
-      libraryKind: 'video',
-      presetName: 'Plex TV Show by Date',
-      projectionPath: 'youtube',
-      db: t.db,
-    });
-    const src = await createSource({
-      libraryId: lib.id,
-      providerId: 'youtube',
-      kind: 'youtube-url-list',
-      mediaKind: 'video',
-      displayName: 'A Channel',
-      ref: 'https://www.youtube.com/@test',
-      db: t.db,
-    });
-    const run = await startRun({
-      scope: 'source',
-      scopeRef: src.id,
-      trigger: 'cron',
-      providerId: 'youtube',
-      db: t.db,
-    });
-    await finishRun({ id: run.id, status: 'warn', telemetry: { selectorDriftHits: 3 }, db: t.db });
-
-    const health = await collectHealth(t.db);
-    const sh = health.sources.find((s) => s.sourceId === src.id);
-    expect(sh?.selectorDriftHits).toBe(3);
-    expect(sh?.status).toBe('warn'); // youtube test() is ok; the drift alarm escalates it to warn
-    expect(sh?.healthModel).toBe('probe'); // in_core provider → the unchanged probe model
-  });
-});
-
 /**
- * The out_of_process OBSERVED health model (DESIGN-045 D-03/D-05/D-10) — the false-alarm fix. A
- * Peloton (`out_of_process`) provider's credentials live only in its worker; the core never holds
- * them, so health must be derived from OBSERVED state (last run + bearer freshness + worker liveness),
- * NEVER from a core-side `test()` that would false-alarm on "missing credentials". Each test starts
- * from a clean slate so both the per-source and overall status can be asserted.
+ * collectHealth against embedded Postgres — the in_core PROBE enrichment (credential-age +
+ * selector-drift) AND the out_of_process OBSERVED model (DESIGN-045 D-03/D-05/D-10, the false-alarm
+ * fix). A Peloton (`out_of_process`) provider's credentials live only in its worker; the core never
+ * holds them, so its health is derived from OBSERVED state (last run + bearer freshness + worker
+ * liveness), NEVER from a core-side `test()` that would false-alarm on "missing credentials". One
+ * shared embedded Postgres for the whole file (no extra boots); a `beforeEach` wipe isolates each
+ * case so both per-source and overall status can be asserted.
  */
-describe('collectHealth — out_of_process observed model (D-03/D-05/D-10)', () => {
+describe('collectHealth — per-source health models', () => {
   let t: TestDb;
 
   beforeAll(async () => {
@@ -152,6 +78,25 @@ describe('collectHealth — out_of_process observed model (D-03/D-05/D-10)', () 
       db: t.db,
     });
   }
+  async function seedYouTube() {
+    const lib = await createLibrary({
+      name: 'YouTube',
+      mediaRoot: '/media/youtube',
+      libraryKind: 'video',
+      presetName: 'Plex TV Show by Date',
+      projectionPath: 'youtube',
+      db: t.db,
+    });
+    return createSource({
+      libraryId: lib.id,
+      providerId: 'youtube',
+      kind: 'youtube-url-list',
+      mediaKind: 'video',
+      displayName: 'A Channel',
+      ref: 'https://www.youtube.com/@test',
+      db: t.db,
+    });
+  }
   const setSession = (sec: number) =>
     createStateStore('peloton', t.db).set('session', { mintedAt: mintedAgo(sec) });
   async function okRun(srcId: string) {
@@ -164,6 +109,37 @@ describe('collectHealth — out_of_process observed model (D-03/D-05/D-10)', () 
     });
     await finishRun({ id: r.id, status: 'ok', counts: { added: 199 }, db: t.db });
   }
+
+  // --- in_core PROBE model (unchanged) --------------------------------------------------------
+
+  it('surfaces the credential age for a Peloton source with a minted session', async () => {
+    const src = await seedPeloton();
+    // a session minted ~50000s ago (> the 21600s SLA → the age is surfaced as an alarm signal).
+    await setSession(50000);
+    const health = await collectHealth(t.db);
+    const sh = health.sources.find((s) => s.sourceId === src.id);
+    expect(sh?.credentialAgeSec).toBeGreaterThanOrEqual(49000);
+  });
+
+  it('raises a selector-drift WARN from the last run telemetry (in_core probe model)', async () => {
+    const src = await seedYouTube();
+    const run = await startRun({
+      scope: 'source',
+      scopeRef: src.id,
+      trigger: 'cron',
+      providerId: 'youtube',
+      db: t.db,
+    });
+    await finishRun({ id: run.id, status: 'warn', telemetry: { selectorDriftHits: 3 }, db: t.db });
+
+    const health = await collectHealth(t.db);
+    const sh = health.sources.find((s) => s.sourceId === src.id);
+    expect(sh?.selectorDriftHits).toBe(3);
+    expect(sh?.status).toBe('warn'); // youtube test() is ok; the drift alarm escalates it to warn
+    expect(sh?.healthModel).toBe('probe'); // in_core provider → the unchanged probe model
+  });
+
+  // --- out_of_process OBSERVED model (the false-alarm fix) ------------------------------------
 
   it('is ok with a fresh bearer + an ok run — and NEVER core-side-fails on missing worker creds', async () => {
     const src = await seedPeloton();
