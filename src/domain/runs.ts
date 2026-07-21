@@ -42,6 +42,9 @@ export interface FinishRunInput {
   /** the owner's Changes/Health/Issues summary object (D-10) — persisted to `runs.summary`. */
   summary?: Record<string, unknown>;
   logExcerpt?: string;
+  /** attribute the finalized Run to the provider that produced it — the worker report/fail path
+   * knows this from the job (a scope-level Run starts unattributed). Additive; never cleared. */
+  providerId?: string;
   db?: DbClient;
 }
 
@@ -55,6 +58,7 @@ export async function finishRun(input: FinishRunInput): Promise<Run> {
       telemetry: input.telemetry ?? {},
       summary: input.summary ?? null,
       logExcerpt: input.logExcerpt ?? null,
+      ...(input.providerId !== undefined ? { providerId: input.providerId } : {}),
       finishedAt: new Date(),
     })
     .where(eq(runs.id, input.id))

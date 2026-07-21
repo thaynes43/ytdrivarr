@@ -16,7 +16,7 @@ import { listSources } from '../../domain/sources';
 import { listEntriesForSource } from '../../domain/entries';
 import { emitLibrary } from '../../core/emitter';
 import { deliverSession } from '../../core/credentials';
-import { buildDiscoveryPayload, enqueueDiscoveryJob, claimJob } from '../../core/jobs';
+import { buildPelotonDiscoveryPayloads, enqueueDiscoveryJob, claimJob } from '../../core/jobs';
 import { reportJob } from '../../core/report';
 import { startRun, getRun } from '../../domain/runs';
 import type { Library, Source, SubscriptionEntryRow } from '../../db/schema';
@@ -75,16 +75,22 @@ describe('emission round-trip parity — the estate live file (embedded PG)', ()
     t = await bootTestDb();
     process.env.DATABASE_URL = t.connectionString;
 
-    // import the live fixture through the branch's import-peloton path into embedded PG.
+    // import the live fixture through the watch-grain import path into embedded PG: one Source
+    // per discipline, every entry attributed to its activity's Source by chip.
     parsed = parsePelotonSubscriptions(fixture);
     await applyPelotonImport(parsed, { apiKeyId: 'test', db: t.db });
 
     const sources = await listSources(t.db);
-    const src = sources.find((s) => s.providerId === 'peloton')!;
-    lib = (await getLibrary(src.libraryId, t.db))!;
-    const rows = await listEntriesForSource(src.id, t.db);
+    const pelotonSources = sources.filter((s) => s.providerId === 'peloton');
+    expect(pelotonSources.map((s) => s.ref).sort()).toEqual([...parsed.activities].sort());
+    lib = (await getLibrary(pelotonSources[0]!.libraryId, t.db))!;
+    const rows: SubscriptionEntryRow[] = [];
+    for (const s of pelotonSources) {
+      rows.push(...(await listEntriesForSource(s.id, t.db)));
+    }
 
-    // run the emit path from the PERSISTED library + entries.
+    // run the emit path from the PERSISTED library + entries (the library recompose spans every
+    // per-activity source — exactly what discovery/report step 4 does).
     const emitted = emitLibrary(
       {
         presetName: lib.presetName,
@@ -203,32 +209,45 @@ describe('report path — merge (not wipe) the seeded 229 + immutable numbering 
   it('a report of only NEW classes merges with the 229; seeded untouched; summary existing reflects the file', async () => {
     const projectionRoot = await mkdtemp(join(tmpdir(), 'ytdrivarr-emit-'));
 
-    // seed the full live file (229).
+    // seed the full live file (229) — the watch-grain import: one Source PER discipline, entries
+    // attributed by chip; the file's total spans the per-activity sources.
     const parsed = parsePelotonSubscriptions(fixture);
-    await applyPelotonImport(parsed, { apiKeyId: 'test', db: t.db });
+    const importSummary = await applyPelotonImport(parsed, { apiKeyId: 'test', db: t.db });
+    expect(importSummary.sources.map((s) => s.ref).sort()).toEqual([...parsed.activities].sort());
     const sources = await listSources(t.db);
-    const src = sources.find((s) => s.providerId === 'peloton') as Source;
+    const pelotonSources = sources.filter((s) => s.providerId === 'peloton');
+    const src = pelotonSources.find((s) => s.ref === 'cycling') as Source;
     const lib = (await getLibrary(src.libraryId, t.db)) as Library;
 
+    let seededTotal = 0;
+    for (const s of pelotonSources) {
+      seededTotal += (await listEntriesForSource(s.id, t.db)).length;
+    }
+    expect(seededTotal).toBe(229);
     const seededRows = await listEntriesForSource(src.id, t.db);
-    expect(seededRows).toHaveLength(229);
+    const cyclingExisting = parsed.entries.filter((e) => e.activity === 'cycling').length;
+    expect(seededRows).toHaveLength(cyclingExisting);
     // capture a seeded entry to prove it is untouched + its numbering is immutable.
     const seededCycling = seededRows.find(
       (r) => r.chip === 'Cycling (30 min)',
     ) as SubscriptionEntryRow;
     const seededOriginalEpisode = seededCycling.episodeNumber;
-    const cyclingExisting = parsed.entries.filter((e) => e.activity === 'cycling').length;
 
-    // enqueue + claim a discovery job.
+    // enqueue + claim ONE AGGREGATED discovery job across the per-activity sources.
     const run = await startRun({
-      scope: 'source',
-      scopeRef: src.id,
+      scope: 'library',
+      scopeRef: lib.id,
       trigger: 'cron',
       providerId: 'peloton',
       db: t.db,
     });
-    const payload = await buildDiscoveryPayload({ runId: run.id, source: src, library: lib }, t.db);
-    const job = await enqueueDiscoveryJob(payload, t.db);
+    const payloads = await buildPelotonDiscoveryPayloads(
+      { runId: run.id, sources: pelotonSources, library: lib },
+      t.db,
+    );
+    expect(payloads).toHaveLength(1);
+    expect(payloads[0]!.peloton.activities).toEqual([...parsed.activities].sort());
+    const job = await enqueueDiscoveryJob(payloads[0]!, t.db);
     await claimJob({ worker: 'w1', providerId: 'peloton', db: t.db });
 
     // the worker reports 2 NEW cycling classes + a RE-REPORT of the seeded class carrying a DIFFERENT
@@ -281,10 +300,17 @@ describe('report path — merge (not wipe) the seeded 229 + immutable numbering 
       db: t.db,
     });
 
-    // MERGE not wipe: 229 seeded + 2 new = 231; the re-report updated in place (not added).
-    expect(outcome.merged).toEqual({ added: 2, updated: 1 });
+    // MERGE not wipe: 229 seeded + 2 new = 231 across the per-activity sources; the re-report
+    // updated in place (not added), and every cycling-chipped entry routed to the cycling source.
+    expect(outcome.merged.added).toBe(2);
+    expect(outcome.merged.updated).toBe(1);
     const afterRows = await listEntriesForSource(src.id, t.db);
-    expect(afterRows).toHaveLength(231);
+    expect(afterRows).toHaveLength(cyclingExisting + 2);
+    let afterTotal = 0;
+    for (const s of pelotonSources) {
+      afterTotal += (await listEntriesForSource(s.id, t.db)).length;
+    }
+    expect(afterTotal).toBe(231);
 
     // seeded entry untouched + numbering immutable (the 999999 re-report was ignored).
     const afterCycling = afterRows.find((r) => r.entryKey === seededCycling.entryKey)!;

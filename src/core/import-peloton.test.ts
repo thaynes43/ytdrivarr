@@ -53,12 +53,13 @@ describe('applyPelotonImport — idempotent seed + round-trip', () => {
     delete process.env.DATABASE_URL;
   });
 
-  it('creates the Library + ONE Source + all entries on first import', async () => {
+  it('creates the Library + one PER-ACTIVITY Source per discipline + all entries on first import', async () => {
     const parsed = parsePelotonSubscriptions(fixture);
     const summary = await applyPelotonImport(parsed, { apiKeyId: 'test', db: t.db });
 
     expect(summary.libraryAction).toBe('created');
-    expect(summary.sourceAction).toBe('created');
+    expect(summary.sources.map((s) => s.ref).sort()).toEqual([...parsed.activities].sort());
+    expect(summary.sources.every((s) => s.action === 'created')).toBe(true);
     expect(summary.entriesAdded).toBe(parsed.entries.length);
     expect(summary.entriesUpdated).toBe(0);
 
@@ -67,28 +68,46 @@ describe('applyPelotonImport — idempotent seed + round-trip', () => {
     expect(lib?.emitPolicy).toEqual(parsed.preset);
 
     const sources = await listSources(t.db);
-    expect(sources.filter((s) => s.providerId === 'peloton')).toHaveLength(1);
-    const rows = await listEntriesForSource(summary.sourceId, t.db);
-    expect(rows).toHaveLength(parsed.entries.length);
+    const pelotonSources = sources.filter((s) => s.providerId === 'peloton');
+    expect(pelotonSources).toHaveLength(parsed.activities.length);
+    // Watch-grain shape: ref = the slug, display = the folder name, settings empty (cap tracks
+    // the global default until an operator pins an override).
+    const bootcamp = pelotonSources.find((s) => s.ref === 'bootcamp');
+    expect(bootcamp?.displayName).toBe('Tread Bootcamp');
+    expect(bootcamp?.settings).toEqual({});
+    // Every entry landed on ITS activity's source (attribution by chip).
+    let total = 0;
+    for (const s of summary.sources) {
+      const rows = await listEntriesForSource(s.id, t.db);
+      expect(rows).toHaveLength(s.entries);
+      expect(rows).toHaveLength(parsed.entries.filter((e) => e.activity === s.ref).length);
+      total += rows.length;
+    }
+    expect(total).toBe(parsed.entries.length);
   });
 
-  it('is idempotent — a re-import creates no new rows', async () => {
+  it('is idempotent — a re-import creates no new rows and never clobbers operator state', async () => {
     const parsed = parsePelotonSubscriptions(fixture);
     const summary = await applyPelotonImport(parsed, { apiKeyId: 'test', db: t.db });
     expect(summary.libraryAction).toBe('updated');
-    expect(summary.sourceAction).toBe('updated');
+    expect(summary.sources.every((s) => s.action === 'unchanged')).toBe(true);
     expect(summary.entriesAdded).toBe(0);
     expect(summary.entriesUpdated).toBe(parsed.entries.length);
 
     const sources = await listSources(t.db);
-    expect(sources.filter((s) => s.providerId === 'peloton')).toHaveLength(1);
+    expect(sources.filter((s) => s.providerId === 'peloton')).toHaveLength(
+      parsed.activities.length,
+    );
   });
 
   it('round-trips: emitting the seeded library reproduces the live file structure', async () => {
     const sources = await listSources(t.db);
-    const src = sources.find((s) => s.providerId === 'peloton');
-    const lib = await getLibrary(src!.libraryId, t.db);
-    const rows = await listEntriesForSource(src!.id, t.db);
+    const pelotonSources = sources.filter((s) => s.providerId === 'peloton');
+    const lib = await getLibrary(pelotonSources[0]!.libraryId, t.db);
+    const rows = [];
+    for (const s of pelotonSources) {
+      rows.push(...(await listEntriesForSource(s.id, t.db)));
+    }
 
     const entries: SubscriptionEntry[] = rows.map((r) => {
       const e: SubscriptionEntry = {

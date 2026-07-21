@@ -1,7 +1,7 @@
 import { logger } from '../logger';
 import { getProvider } from './registry';
 import { dispatchDiscovery } from './dispatcher';
-import { buildDiscoveryPayload, enqueueDiscoveryJob } from './jobs';
+import { buildPelotonDiscoveryPayloads, enqueueDiscoveryJob } from './jobs';
 import { createStateStore } from './state-store';
 import { dedupEntries, dedupTitleCollisions, preservePublishedNumbering } from './dedup';
 import { emitLibrary } from './emitter';
@@ -143,19 +143,20 @@ export async function runDiscovery(input: RunDiscoveryInput): Promise<DiscoveryO
       counts.libraries += 1;
       const sources = await listSourcesForLibrary(library.id, input.db);
 
-      // 1) Discover the in-scope, enabled sources and persist their entries.
+      // 1) Discover the in-scope, enabled sources and persist their entries. `out_of_process`
+      //    sources are COLLECTED per provider and enqueued AGGREGATED below — the watch-grain
+      //    model stores one Peloton Source per activity, but the worker still logs in once and
+      //    walks every monitored activity in one job (D-03).
+      const outOfProcessByProvider = new Map<string, Source[]>();
       for (const source of sources) {
         if (!source.enabled || !inDiscoveryScope(input, source)) continue;
         counts.sources += 1;
         const provider = getProvider(source.providerId);
 
-        // out_of_process (Peloton): enqueue a job carrying the Run id + the full discovery payload;
-        // the worker scrapes and reports back (D-03). Do NOT run the scrape inline.
         if (provider.runtime === 'out_of_process') {
-          const payload = await buildDiscoveryPayload({ runId: run.id, source, library }, input.db);
-          await enqueueDiscoveryJob(payload, input.db);
-          counts.queued += 1;
-          queuedOutOfProcess = true;
+          const group = outOfProcessByProvider.get(source.providerId);
+          if (group) group.push(source);
+          else outOfProcessByProvider.set(source.providerId, [source]);
           continue;
         }
 
@@ -171,6 +172,23 @@ export async function runDiscovery(input: RunDiscoveryInput): Promise<DiscoveryO
         const published = await loadPublishedNumbering(source.id, input.db);
         const numbered = preservePublishedNumbering(validated, published);
         await replaceEntriesForSource(source.id, numbered, input.db);
+      }
+
+      // out_of_process (Peloton): enqueue aggregated job(s) carrying the Run id + the full
+      // discovery payload; the worker scrapes and reports back (D-03). Never scrape inline.
+      // The dedup/numbering seed spans ALL of the provider's sources in this library, in scope
+      // or not, so a scoped or partially-unmonitored run can never renumber a sibling.
+      for (const [providerId, scrapeSources] of outOfProcessByProvider) {
+        const allSources = sources.filter((s) => s.providerId === providerId);
+        const payloads = await buildPelotonDiscoveryPayloads(
+          { runId: run.id, sources: scrapeSources, allSources, library },
+          input.db,
+        );
+        for (const payload of payloads) {
+          await enqueueDiscoveryJob(payload, input.db);
+          counts.queued += 1;
+          queuedOutOfProcess = true;
+        }
       }
 
       // 2) Recompose the WHOLE library from all persisted entries (a per-source run must not wipe

@@ -39,6 +39,15 @@ export const sourceDto = z.object({
   capsContext: jsonObject,
   createdAt: z.string(),
   updatedAt: z.string(),
+  // --- additive console-facing enrichment (the *arr Sources table columns) --------------------
+  /** persisted subscription entries attributed to this source. */
+  entryCount: z.number().optional(),
+  /** the EFFECTIVE classes-per-scrape cap (per-source override ?? the global default) for a
+   * capped provider (Peloton); null for uncapped providers (a YouTube channel has no cap). */
+  effectiveCap: z.number().nullable().optional(),
+  /** the most recent Run whose scope covered this source (all | its library | itself). */
+  lastRunAt: z.string().nullable().optional(),
+  lastRunStatus: z.enum(['running', 'ok', 'warn', 'error']).nullable().optional(),
 });
 export type SourceDto = z.infer<typeof sourceDto>;
 
@@ -82,6 +91,15 @@ export const providerDto = z.object({
   capabilities: z.array(z.enum(['auth', 'scrape', 'tokenMint', 'assets', 'remediation'])),
   mediaKinds: z.array(mediaKindSchema),
   stateNamespace: z.string(),
+  /** the provider's declared discovery cadence (C4/D-07) — additive, for the console's cards. */
+  scheduling: z
+    .object({
+      mode: z.enum(['event_driven', 'cron']),
+      cron: z.string().optional(),
+      safetyCron: z.string().optional(),
+      credentialRefreshSec: z.number().optional(),
+    })
+    .optional(),
 });
 export type ProviderDto = z.infer<typeof providerDto>;
 
@@ -121,6 +139,26 @@ export const discoveryOutcomeDto = z.object({
 export const errorDto = z.object({ error: z.string(), details: z.unknown().optional() });
 
 export const okDto = z.object({ ok: z.literal(true) });
+
+/** GET /api/v1/system/status — the System → Status "About" facts (D-20). Honest runtime state
+ * only; never secret VALUES (key count yes, keys never). */
+export const systemStatusDto = z.object({
+  service: z.literal('ytdrivarr'),
+  version: z.string(),
+  nodeVersion: z.string(),
+  /** database reachability + applied drizzle migration count (null when unreachable). */
+  database: z.object({
+    reachable: z.boolean(),
+    migrations: z.number().nullable(),
+  }),
+  projectionRoot: z.string().nullable(),
+  /** D-21 — `open` (keyless on a LAN-only ingress) or `api-key`. */
+  authMode: z.enum(['api-key', 'open']),
+  apiKeysConfigured: z.number(),
+  uptimeSec: z.number(),
+  startedAt: z.string(),
+});
+export type SystemStatusDto = z.infer<typeof systemStatusDto>;
 
 export const entryDto = z.object({
   id: z.string(),

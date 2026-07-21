@@ -4,27 +4,27 @@ import type { SubscriptionEntry } from '../contracts';
 import { inTransaction } from '../db/client';
 import { ValidationError } from '../errors';
 import { createLibrary, listLibraries, updateLibrary } from '../domain/libraries';
-import { createSource, listSources, updateSource } from '../domain/sources';
+import { createSource, listSources } from '../domain/sources';
 import { loadPublishedNumbering, mergeEntriesForSource } from '../domain/entries';
 import { preservePublishedNumbering } from './dedup';
-import { pelotonSettingsSchema } from '../providers/peloton';
-import { parseChip } from '../providers/peloton/folder-mapping';
+
+import { activityFolderName, parseChip } from '../providers/peloton/folder-mapping';
 import { extractClassId } from '../providers/peloton/numbering';
 
 /**
  * Import the estate's LIVE Peloton `subscriptions.yaml` (DESIGN-045 D-19 M3) into ytdrivarr: the
- * `__preset__` policy + the `= {Activity} ({N} min)` groups → ONE Peloton Library + ONE Peloton
- * Source + all subscription entries (entryKey = classId; season/episode preserved). IDEMPOTENT and
- * AUDITED (the Source write rides the single-writer, D-08). The round-trip is exact: emitting the
- * seeded Library reproduces the live file's parsed structure (deep-equal on parsed YAML).
+ * `__preset__` policy + the `= {Activity} ({N} min)` groups → ONE Peloton Library + one
+ * PER-ACTIVITY Peloton Source per discipline (the watch-grain model, migration 0002) + all
+ * subscription entries attributed to their activity's Source (entryKey = classId; season/episode
+ * preserved). IDEMPOTENT and AUDITED (Source writes ride the single-writer, D-08). The round-trip
+ * is exact: emitting the seeded Library reproduces the live file's parsed structure (the chip
+ * grouping is entry-borne, so the split changes nothing in the projection).
  */
 
 export const PELOTON_LIBRARY_NAME = 'Peloton';
-export const PELOTON_SOURCE_REF = 'peloton';
 export const PELOTON_MEDIA_ROOT = '/media/peloton';
 export const PELOTON_PRESET_NAME = 'Plex TV Show by Date';
 export const PELOTON_PROJECTION_PATH = 'peloton';
-export const PELOTON_MAX_CLASSES_PER_ACTIVITY = 25;
 
 export interface ParsedPelotonEntry {
   classId: string;
@@ -143,21 +143,30 @@ export interface PelotonImportOptions {
   db?: DbClient;
 }
 
+export interface PelotonImportSourceSummary {
+  ref: string;
+  id: string;
+  action: 'created' | 'unchanged';
+  entries: number;
+}
+
 export interface PelotonImportSummary {
   presetName: string;
   activities: string[];
   entries: number;
   libraryId: string;
   libraryAction: 'created' | 'updated';
-  sourceId: string;
-  sourceAction: 'created' | 'updated';
+  /** one per-activity Source per discipline found in the file (the watch-grain model). */
+  sources: PelotonImportSourceSummary[];
   entriesAdded: number;
   entriesUpdated: number;
 }
 
 /**
- * Idempotently ensure the Peloton Library + the single Peloton Source + all subscription entries.
- * Re-running produces no new rows (entries upsert by classId; the Library/Source match on their
+ * Idempotently ensure the Peloton Library + one PER-ACTIVITY Peloton Source per discipline in the
+ * file (the watch-grain model, migration 0002: `ref` = the activity slug, display name = the
+ * activity folder) + all subscription entries, each attributed to its activity's Source by chip.
+ * Re-running produces no new rows (entries upsert by classId; the Library/Sources match on their
  * stable keys). Every Source write is audited in the same transaction (D-08).
  */
 export async function applyPelotonImport(
@@ -201,48 +210,60 @@ export async function applyPelotonImport(
       libraryAction = 'created';
     }
 
-    // 2) ensure the single Peloton Source (match on providerId + ref).
-    const settings = pelotonSettingsSchema.parse({
-      activities: parsed.activities,
-      maxClassesPerActivity: PELOTON_MAX_CLASSES_PER_ACTIVITY,
-    });
+    // 2) ensure one PER-ACTIVITY Source per discipline in the file (match on providerId + ref =
+    //    the activity slug within the library). Settings stay EMPTY — the scrape profile tracks
+    //    the code defaults and the cap tracks the global default (25) until an operator pins an
+    //    override (storing expanded defaults would freeze them onto the rows).
+    const settings: Record<string, unknown> = {};
     const sources = await listSources(tx);
-    const existingSource = sources.find(
-      (s) => s.providerId === 'peloton' && s.ref === PELOTON_SOURCE_REF,
-    );
-    let sourceId: string;
-    let sourceAction: 'created' | 'updated';
-    if (existingSource) {
-      const updated = await updateSource({
-        id: existingSource.id,
-        patch: { libraryId, settings },
-        ...(opts.apiKeyId !== undefined ? { apiKeyId: opts.apiKeyId } : {}),
-        db: tx,
-      });
-      sourceId = updated.id;
-      sourceAction = 'updated';
-    } else {
-      const created = await createSource({
-        libraryId,
-        providerId: 'peloton',
-        kind: 'peloton-scraper',
-        mediaKind: 'video',
-        displayName: PELOTON_LIBRARY_NAME,
-        ref: PELOTON_SOURCE_REF,
-        settings,
-        createdBy: 'import',
-        ...(opts.apiKeyId !== undefined ? { apiKeyId: opts.apiKeyId } : {}),
-        db: tx,
-      });
-      sourceId = created.id;
-      sourceAction = 'created';
+    const sourceSummaries: PelotonImportSourceSummary[] = [];
+    const sourceIdByActivity = new Map<string, string>();
+    for (const slug of parsed.activities) {
+      const existingSource = sources.find(
+        (s) => s.providerId === 'peloton' && s.ref === slug && s.libraryId === libraryId,
+      );
+      let id: string;
+      let action: 'created' | 'unchanged';
+      if (existingSource) {
+        // An already-present activity Source is operator-owned state (monitored flag, cap
+        // override) — a re-import must never clobber it, so it is left untouched.
+        id = existingSource.id;
+        action = 'unchanged';
+      } else {
+        const created = await createSource({
+          libraryId,
+          providerId: 'peloton',
+          kind: 'peloton-scraper',
+          mediaKind: 'video',
+          displayName: activityFolderName(slug),
+          ref: slug,
+          settings,
+          createdBy: 'import',
+          ...(opts.apiKeyId !== undefined ? { apiKeyId: opts.apiKeyId } : {}),
+          db: tx,
+        });
+        id = created.id;
+        action = 'created';
+      }
+      sourceIdByActivity.set(slug, id);
+      sourceSummaries.push({ ref: slug, id, action, entries: 0 });
     }
 
-    // 3) seed the subscription entries (entryKey = classId), preserving immutable numbering.
-    const desired = parsed.entries.map((e) => parsedEntryToSubscription(e, parsed.presetName));
-    const published = await loadPublishedNumbering(sourceId, tx);
-    const numbered = preservePublishedNumbering(desired, published);
-    const merged = await mergeEntriesForSource(sourceId, numbered, tx);
+    // 3) seed the subscription entries (entryKey = classId) into their activity's Source,
+    //    preserving immutable numbering per Source.
+    let entriesAdded = 0;
+    let entriesUpdated = 0;
+    for (const summary of sourceSummaries) {
+      const activityEntries = parsed.entries.filter((e) => e.activity === summary.ref);
+      summary.entries = activityEntries.length;
+      if (activityEntries.length === 0) continue;
+      const desired = activityEntries.map((e) => parsedEntryToSubscription(e, parsed.presetName));
+      const published = await loadPublishedNumbering(summary.id, tx);
+      const numbered = preservePublishedNumbering(desired, published);
+      const merged = await mergeEntriesForSource(summary.id, numbered, tx);
+      entriesAdded += merged.added;
+      entriesUpdated += merged.updated;
+    }
 
     return {
       presetName: parsed.presetName,
@@ -250,10 +271,9 @@ export async function applyPelotonImport(
       entries: parsed.entries.length,
       libraryId,
       libraryAction,
-      sourceId,
-      sourceAction,
-      entriesAdded: merged.added,
-      entriesUpdated: merged.updated,
+      sources: sourceSummaries,
+      entriesAdded,
+      entriesUpdated,
     };
   });
 }

@@ -138,3 +138,123 @@ describe('M1 end-to-end: library → sources → run → projection', () => {
     expect(res.status).toBe(401);
   });
 });
+
+describe('console-facing API additions', () => {
+  it('enriches sources with entryCount, effectiveCap and last-run coverage', async () => {
+    const libRes = await post('/api/v1/libraries', {
+      name: 'Peloton',
+      mediaRoot: '/media/peloton',
+      libraryKind: 'video',
+      presetName: 'Plex TV Show by Date',
+      projectionPath: 'peloton-enrich',
+    });
+    const lib = (await libRes.json()) as { id: string };
+    const created = await post('/api/v1/sources', {
+      libraryId: lib.id,
+      providerId: 'peloton',
+      kind: 'peloton-scraper',
+      mediaKind: 'video',
+      displayName: 'Cycling',
+      ref: 'cycling',
+      settings: {},
+    });
+    expect(created.status).toBe(201);
+    const cycling = (await created.json()) as {
+      id: string;
+      effectiveCap: number | null;
+      entryCount: number;
+    };
+    // A per-activity Peloton source resolves the GLOBAL default cap; a fresh one has no entries.
+    expect(cycling.effectiveCap).toBe(25);
+    expect(cycling.entryCount).toBe(0);
+
+    const listRes = await app.request('/api/v1/sources', { headers: { 'x-api-key': KEY } });
+    const list = (await listRes.json()) as {
+      providerId: string;
+      effectiveCap: number | null;
+      lastRunAt: string | null;
+      lastRunStatus: string | null;
+      entryCount: number;
+    }[];
+    const youtubeRow = list.find((s) => s.providerId === 'in-core-url-list');
+    // Uncapped providers carry null; the earlier scope-all run covers every source.
+    expect(youtubeRow?.effectiveCap).toBeNull();
+    expect(youtubeRow?.entryCount).toBe(1);
+    expect(youtubeRow?.lastRunAt).not.toBeNull();
+    expect(youtubeRow?.lastRunStatus).toBe('ok');
+
+    // The per-source cap override round-trips through PATCH and re-resolves.
+    const patched = await app.request(`/api/v1/sources/${cycling.id}`, {
+      method: 'PATCH',
+      headers: auth,
+      body: JSON.stringify({ settings: { maxClassesPerActivity: 40 } }),
+    });
+    expect(((await patched.json()) as { effectiveCap: number }).effectiveCap).toBe(40);
+  });
+
+  it('validates the ref server-side for youtube sources (add + edit)', async () => {
+    const libRes = await post('/api/v1/libraries', {
+      name: 'YT-refcheck',
+      mediaRoot: '/media/youtube',
+      libraryKind: 'video',
+      presetName: 'Plex TV Show by Date',
+      projectionPath: 'yt-refcheck',
+    });
+    const lib = (await libRes.json()) as { id: string };
+    const bad = await post('/api/v1/sources', {
+      libraryId: lib.id,
+      providerId: 'youtube',
+      kind: 'youtube-url-list',
+      mediaKind: 'video',
+      displayName: 'Bad',
+      ref: 'not-a-url',
+    });
+    expect(bad.status).toBe(400);
+    expect(((await bad.json()) as { error: string }).error).toContain('invalid youtube ref');
+
+    const good = await post('/api/v1/sources', {
+      libraryId: lib.id,
+      providerId: 'youtube',
+      kind: 'youtube-url-list',
+      mediaKind: 'video',
+      displayName: 'Good',
+      ref: 'https://www.youtube.com/@good',
+      settings: { chip: 'Docs' },
+    });
+    expect(good.status).toBe(201);
+    const source = (await good.json()) as { id: string };
+    const badEdit = await app.request(`/api/v1/sources/${source.id}`, {
+      method: 'PATCH',
+      headers: auth,
+      body: JSON.stringify({ ref: 'still-not-a-url' }),
+    });
+    expect(badEdit.status).toBe(400);
+    // …and a settings edit that fails the provider schema is rejected too.
+    const badSettings = await app.request(`/api/v1/sources/${source.id}`, {
+      method: 'PATCH',
+      headers: auth,
+      body: JSON.stringify({ settings: { chip: 42 } }),
+    });
+    expect(badSettings.status).toBe(400);
+  });
+
+  it('serves System → Status facts without ever returning key values', async () => {
+    const res = await app.request('/api/v1/system/status', { headers: { 'x-api-key': KEY } });
+    expect(res.status).toBe(200);
+    const status = (await res.json()) as Record<string, unknown>;
+    expect(status.service).toBe('ytdrivarr');
+    expect(typeof status.version).toBe('string');
+    expect(status.database).toMatchObject({ reachable: true });
+    expect(status.authMode).toBe('api-key');
+    expect(status.apiKeysConfigured).toBe(1);
+    // never the key VALUES — count only.
+    expect(JSON.stringify(status)).not.toContain(KEY);
+  });
+
+  it('marks API responses no-store so a browser can never render stale monitored flags', async () => {
+    const res = await app.request('/api/v1/sources', { headers: { 'x-api-key': KEY } });
+    expect(res.headers.get('cache-control')).toBe('no-store');
+    const health = await app.request('/health');
+    expect(health.headers.get('cache-control')).toBe('no-store');
+  });
+});

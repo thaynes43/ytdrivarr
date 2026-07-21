@@ -8,7 +8,6 @@ import type {
   SourceProvider,
   SubscriptionEntry,
 } from '../../contracts';
-import { DEFAULT_ACTIVITIES } from './folder-mapping';
 
 /**
  * The M3 `out_of_process` authenticated-scraper provider (DESIGN-045 D-03/D-05/D-06/D-07/D-10 —
@@ -31,13 +30,27 @@ export interface PelotonSessionState {
 }
 
 /**
- * The Source settings a Peloton Source carries (validated on add). Defaults mirror the estate's live
- * scrape config: the 12 live disciplines, 25 classes/activity, dynamic scrolling, the donor's wait
- * profile (page_load_wait=10, login_wait=15, scroll_pause=3).
+ * The GLOBAL default classes-per-activity cap (the owner's watch-grain caps model): one default,
+ * overridable per Source via `settings.maxClassesPerActivity`. A per-activity Source whose settings
+ * OMIT the override tracks this default; a set value pins that activity.
+ */
+export const DEFAULT_MAX_CLASSES_PER_ACTIVITY = 25;
+
+/**
+ * The Source settings a per-activity Peloton Source carries (validated on add/edit). Since the
+ * watch-grain split (migration 0002) a Peloton Source IS one activity — `source.ref` carries the
+ * activity SLUG (`cycling`, `bike_bootcamp`, …) and there is NO `activities[]` array anymore.
+ * Defaults mirror the estate's live scrape profile (dynamic scrolling, the donor's wait profile:
+ * page_load_wait=10, login_wait=15, scroll_pause=3). The discovery payload builder AGGREGATES the
+ * enabled activity Sources of a Library into one scrape job (`buildPelotonDiscoveryPayloads`), so
+ * the worker still logs in once and walks every monitored activity.
  */
 export const pelotonSettingsSchema = z.object({
-  activities: z.array(z.string().min(1)).default([...DEFAULT_ACTIVITIES]),
-  maxClassesPerActivity: z.number().int().positive().default(25),
+  /**
+   * Per-Source cap override. ABSENT (the normal state) means the Source tracks the global default
+   * (`DEFAULT_MAX_CLASSES_PER_ACTIVITY`); present pins this activity's own cap.
+   */
+  maxClassesPerActivity: z.number().int().positive().optional(),
   dynamicScrolling: z.boolean().default(true),
   maxScrolls: z.number().int().positive().default(250),
   scrollPauseSec: z.number().positive().default(3),
@@ -45,7 +58,7 @@ export const pelotonSettingsSchema = z.object({
   loginWaitSec: z.number().positive().default(15),
   /**
    * Optional filesystem root to scan for already-downloaded episodes (the DISK half of the donor's
-   * merged episode data, D-06). When set, `buildDiscoveryPayload` walks
+   * merged episode data, D-06). When set, the payload builder walks
    * `{diskScanPath}/{Activity}/{Instructor}/S{season}E{episode} …/` leaf folders and merges the
    * per-(activity, duration) episode maxima into the subscription-derived numbering seed (max per
    * key wins). Undefined (default) skips the disk scan. In-cluster this is `/projections/peloton`:
@@ -55,6 +68,14 @@ export const pelotonSettingsSchema = z.object({
   diskScanPath: z.string().min(1).optional(),
 });
 export type PelotonSettings = z.infer<typeof pelotonSettingsSchema>;
+
+/**
+ * The EFFECTIVE cap for a per-activity Source: its own override when set, else the global default.
+ * The console's Cap column and the payload builder both read this — one resolution rule.
+ */
+export function effectivePelotonCap(settings: Pick<PelotonSettings, 'maxClassesPerActivity'>) {
+  return settings.maxClassesPerActivity ?? DEFAULT_MAX_CLASSES_PER_ACTIVITY;
+}
 
 /** The credentials ESO injects into the provider context (C2 — the core injects, never hardcodes). */
 export const PELOTON_SECRET_KEYS = ['PELOTON_USERNAME', 'PELOTON_PASSWORD'] as const;

@@ -1,31 +1,40 @@
 import { api } from '../api';
-import { el, emptyState, kindChip, pageHeader } from '../dom';
-import type { LibraryDto } from '../types';
+import { el, emptyState, kindChip } from '../dom';
+import { toolbar } from '../toolbar';
+import type { LibraryDto, SourceDto } from '../types';
 
 /**
- * Libraries — the emit units (DESIGN-045 D-02): one config.yaml + subscriptions.yaml tuple per
- * library, projected to `projectionPath` for the downloader CronJobs. M1 console scope is the
- * honest read: the list; library CRUD stays an API/app concern.
+ * Settings → Libraries — the emit units (DESIGN-045 D-02): one config.yaml + subscriptions.yaml
+ * tuple per library, projected to `projectionPath` for the downloader CronJobs. The honest read:
+ * the list plus per-library source counts; library CRUD stays an API/app concern.
  */
-export async function renderLibraries(root: HTMLElement): Promise<void> {
-  const libraries = await api<LibraryDto[]>('/api/v1/libraries');
 
-  root.append(pageHeader('Libraries', '/api/v1/libraries'));
+export async function renderLibraries(root: HTMLElement, refresh: () => void): Promise<void> {
+  const [libraries, sources] = await Promise.all([
+    api<LibraryDto[]>('/api/v1/libraries'),
+    api<SourceDto[]>('/api/v1/sources'),
+  ]);
+
   root.append(
-    el(
-      'p',
-      { class: 'section-note' },
-      'Each library is an emit unit: sources render into its config.yaml + subscriptions.yaml at ',
-      el('code', {}, 'projectionPath'),
-      ' on the downloader volume (D-14). Create/edit via the API.',
-    ),
+    toolbar({
+      apiPath: '/api/v1/libraries',
+      actions: [{ label: 'Refresh', icon: 'refresh', onClick: () => refresh() }],
+    }),
   );
+  const content = el('div', { class: 'content' });
+  root.append(content);
+  content.append(el('div', { class: 'section-h' }, 'Libraries'));
 
   if (libraries.length === 0) {
-    root.append(
-      emptyState('No libraries yet.', 'POST /api/v1/libraries creates one — see /openapi.json.'),
+    content.append(
+      emptyState('No libraries yet.', 'POST /api/v1/libraries creates one (see /openapi.json).'),
     );
     return;
+  }
+
+  const counts = new Map<string, number>();
+  for (const source of sources) {
+    counts.set(source.libraryId, (counts.get(source.libraryId) ?? 0) + 1);
   }
 
   const tbody = el('tbody', {});
@@ -34,39 +43,46 @@ export async function renderLibraries(root: HTMLElement): Promise<void> {
       el(
         'tr',
         {},
-        el('td', {}, lib.name),
-        el('td', {}, kindChip(lib.libraryKind)),
-        el('td', {}, lib.player),
-        el('td', { class: 'mono' }, lib.mediaRoot),
-        el('td', { class: 'mono' }, lib.projectionPath),
-        el('td', {}, lib.presetName),
+        el(
+          'td',
+          { class: 'cell-main' },
+          el('a', { href: '#/settings/libraries' }, lib.name),
+          el('div', { class: 'm-meta' }, `${lib.libraryKind} · ${lib.presetName}`),
+        ),
+        el('td', { class: 'hide-m' }, kindChip(lib.libraryKind)),
+        el('td', { class: 'muted hide-m' }, lib.presetName),
+        el('td', { class: 'muted' }, lib.mediaRoot),
+        el('td', { class: 'muted hide-m' }, lib.projectionPath),
+        el('td', { class: 'num' }, String(counts.get(lib.id) ?? 0)),
       ),
     );
   }
 
-  root.append(
+  content.append(
     el(
-      'div',
-      { class: 'table-wrap' },
+      'table',
+      { class: 'arr' },
       el(
-        'table',
+        'thead',
         {},
         el(
-          'thead',
+          'tr',
           {},
-          el(
-            'tr',
-            {},
-            el('th', {}, 'Name'),
-            el('th', {}, 'Kind'),
-            el('th', {}, 'Player'),
-            el('th', {}, 'Media root'),
-            el('th', {}, 'Projection path'),
-            el('th', {}, 'Preset'),
-          ),
+          el('th', {}, 'Library'),
+          el('th', { class: 'hide-m' }, 'Kind'),
+          el('th', { class: 'hide-m' }, 'Preset'),
+          el('th', {}, 'Media Root'),
+          el('th', { class: 'hide-m' }, 'Projection'),
+          el('th', { class: 'num' }, 'Sources'),
         ),
-        tbody,
       ),
+      tbody,
+    ),
+    el(
+      'div',
+      { class: 't-foot' },
+      el('span', {}, `Total: ${libraries.length} libraries`),
+      el('span', {}, ''),
     ),
   );
 }
