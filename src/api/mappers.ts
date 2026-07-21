@@ -46,6 +46,7 @@ export function toRunDto(row: Run): RunDto {
     status: row.status,
     counts: row.counts,
     telemetry: row.telemetry,
+    summary: row.summary ?? null,
     logExcerpt: row.logExcerpt,
     startedAt: row.startedAt.toISOString(),
     finishedAt: row.finishedAt ? row.finishedAt.toISOString() : null,

@@ -24,6 +24,9 @@ async function main(): Promise<void> {
   const appOptions: CreateAppOptions = {
     apiKeys: config.apiKeys,
     ...(config.projectionRoot !== undefined ? { projectionRoot: config.projectionRoot } : {}),
+    ...(config.credentialRoot !== undefined ? { credentialRoot: config.credentialRoot } : {}),
+    jobHeartbeatExpirySec: config.jobHeartbeatExpirySec,
+    jobMaxAttempts: config.jobMaxAttempts,
   };
   const app = createApp(appOptions);
 

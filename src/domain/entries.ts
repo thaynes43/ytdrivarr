@@ -64,3 +64,73 @@ export async function listEntriesForSource(
   const d = resolveDb(exec) as Database;
   return d.select().from(subscriptionEntries).where(eq(subscriptionEntries.sourceId, sourceId));
 }
+
+export interface MergeEntriesResult {
+  added: number;
+  updated: number;
+  total: number;
+}
+
+/**
+ * MERGE (upsert) entries for a Source WITHOUT wiping its existing rows (DESIGN-045 D-06). This is
+ * the out-of-process report path (D-03): a Peloton scrape returns only the NEW classes it found, so
+ * `replaceEntriesForSource` semantics would delete every prior class. Instead we upsert by the
+ * `(sourceId, entryKey)` identity — new classes insert, an already-known classId updates in place.
+ * The caller MUST have already run `preservePublishedNumbering` so a re-reported class keeps its
+ * immutable season/episode (the re-key guard, Q-02 §6 #8); this writer never renumbers on its own.
+ */
+export async function mergeEntriesForSource(
+  sourceId: string,
+  entries: SubscriptionEntry[],
+  exec?: DbClient,
+): Promise<MergeEntriesResult> {
+  if (entries.length === 0) {
+    return { added: 0, updated: 0, total: 0 };
+  }
+  return inTransaction(exec, async (tx) => {
+    const existing = await tx
+      .select({ entryKey: subscriptionEntries.entryKey })
+      .from(subscriptionEntries)
+      .where(eq(subscriptionEntries.sourceId, sourceId));
+    const known = new Set(existing.map((r) => r.entryKey));
+
+    let added = 0;
+    let updated = 0;
+    for (const entry of entries) {
+      const values = {
+        sourceId,
+        entryKey: entry.entryKey,
+        displayName: entry.displayName,
+        downloadRef: entry.downloadRef,
+        preset: entry.preset,
+        chip: entry.chip ?? null,
+        overrides: entry.overrides ?? null,
+        ytdlOptions: entry.ytdlOptions ?? null,
+        assets: entry.assets ?? null,
+        seasonNumber: numberFromOverrides(entry, 'season_number'),
+        episodeNumber: numberFromOverrides(entry, 'episode_number'),
+      };
+      if (known.has(entry.entryKey)) updated += 1;
+      else added += 1;
+      await tx
+        .insert(subscriptionEntries)
+        .values(values)
+        .onConflictDoUpdate({
+          target: [subscriptionEntries.sourceId, subscriptionEntries.entryKey],
+          set: {
+            displayName: values.displayName,
+            downloadRef: values.downloadRef,
+            preset: values.preset,
+            chip: values.chip,
+            overrides: values.overrides,
+            ytdlOptions: values.ytdlOptions,
+            assets: values.assets,
+            seasonNumber: values.seasonNumber,
+            episodeNumber: values.episodeNumber,
+            updatedAt: new Date(),
+          },
+        });
+    }
+    return { added, updated, total: known.size + added };
+  });
+}

@@ -1,10 +1,12 @@
 import { logger } from '../logger';
 import { getProvider } from './registry';
 import { dispatchDiscovery } from './dispatcher';
+import { buildDiscoveryPayload, enqueueDiscoveryJob } from './jobs';
 import { createStateStore } from './state-store';
 import { dedupEntries, preservePublishedNumbering } from './dedup';
 import { emitLibrary } from './emitter';
 import { projectLibrary, resolveProjectionDir } from './projection';
+import { buildRunSummary, runSummaryToJson } from '../domain/run-summary';
 import {
   subscriptionEntrySchema,
   type ProviderContext,
@@ -131,6 +133,9 @@ export async function runDiscovery(input: RunDiscoveryInput): Promise<DiscoveryO
     queued: 0,
   };
   const projected: { libraryId: string; dir: string }[] = [];
+  // DESIGN-045 D-03: if ANY out_of_process job is queued, the Run stays `running` — the worker's
+  // report/fail finalizes it (in the report/fail path). in_core-only runs finalize here.
+  let queuedOutOfProcess = false;
 
   try {
     const libs = await resolveLibraries(input, input.db);
@@ -143,10 +148,22 @@ export async function runDiscovery(input: RunDiscoveryInput): Promise<DiscoveryO
         if (!source.enabled || !inDiscoveryScope(input, source)) continue;
         counts.sources += 1;
         const provider = getProvider(source.providerId);
+
+        // out_of_process (Peloton): enqueue a job carrying the Run id + the full discovery payload;
+        // the worker scrapes and reports back (D-03). Do NOT run the scrape inline.
+        if (provider.runtime === 'out_of_process') {
+          const payload = await buildDiscoveryPayload({ runId: run.id, source, library }, input.db);
+          await enqueueDiscoveryJob(payload, input.db);
+          counts.queued += 1;
+          queuedOutOfProcess = true;
+          continue;
+        }
+
         const ctx = buildContext(source, provider.stateNamespace, input.db);
         const dispatch = await dispatchDiscovery(provider, ctx, input.db);
-        if (dispatch.mode === 'out_of_process') {
+        if (dispatch.mode !== 'in_core') {
           counts.queued += 1;
+          queuedOutOfProcess = true;
           continue;
         }
         const validated = dispatch.entries.map((entry) => subscriptionEntrySchema.parse(entry));
@@ -182,10 +199,20 @@ export async function runDiscovery(input: RunDiscoveryInput): Promise<DiscoveryO
       projected.push({ libraryId: library.id, dir });
     }
 
+    // An out_of_process job was queued: leave the Run RUNNING (the worker report/fail finalizes it,
+    // D-03). The in_core parts have already persisted + projected; the worker re-projects on report.
+    if (queuedOutOfProcess) {
+      return { runId: run.id, status: 'running', counts, projected };
+    }
+
+    // in_core-only run: finalize now, with the owner's Changes/Health/Issues summary (D-10) built
+    // from the counts (no per-activity telemetry for a URL provider — it degrades gracefully).
+    const summary = buildRunSummary({ counts });
     await finishRun({
       id: run.id,
       status: 'ok',
       counts,
+      summary: runSummaryToJson(summary),
       ...(input.db !== undefined ? { db: input.db } : {}),
     });
     return { runId: run.id, status: 'ok', counts, projected };

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { mediaKindSchema } from '../contracts';
 import { remediationActionSchema } from '../contracts';
+import { subscriptionEntrySchema } from '../contracts';
 
 /** Zod schemas for every REST request/response (DESIGN-045 D-01) — OpenAPI is generated from them. */
 
@@ -49,6 +50,8 @@ export const runDto = z.object({
   status: z.enum(['running', 'ok', 'warn', 'error']),
   counts: z.record(z.string(), z.number()),
   telemetry: jsonObject,
+  /** the owner's Changes/Health/Issues summary object (D-10) — null until the run finalizes. */
+  summary: jsonObject.nullable(),
   logExcerpt: z.string().nullable(),
   startedAt: z.string(),
   finishedAt: z.string().nullable(),
@@ -98,7 +101,8 @@ export type HealthDto = z.infer<typeof healthDto>;
 
 export const discoveryOutcomeDto = z.object({
   runId: z.string(),
-  status: z.enum(['ok', 'warn', 'error']),
+  // `running` when an out_of_process job was queued — the worker report/fail finalizes the Run (D-03).
+  status: z.enum(['running', 'ok', 'warn', 'error']),
   counts: z.record(z.string(), z.number()),
   projected: z.array(z.object({ libraryId: z.string(), dir: z.string() })),
 });
@@ -214,3 +218,73 @@ export const importSummaryDto = z.object({
 });
 
 export const idParam = z.object({ id: z.string() });
+
+// --- out-of-process transport (the worker HTTP contract, D-03) ---------------------------------
+
+const jobKindDto = z.enum(['discovery', 'remediation']);
+
+/** POST /api/v1/jobs/claim — a worker claims the oldest queued/reclaimable job. */
+export const claimJobBody = z.object({
+  worker: z.string().min(1),
+  kinds: z.array(jobKindDto).optional(),
+  providerId: z.string().min(1).optional(),
+});
+
+export const claimedJobDto = z.object({
+  id: z.string(),
+  kind: jobKindDto,
+  providerId: z.string(),
+  payload: jsonObject,
+  attempts: z.number(),
+});
+export const claimJobResponse = z.object({ job: claimedJobDto.nullable() });
+
+/** POST /api/v1/jobs/:id/heartbeat — refresh ownership + flip claimed→running. */
+export const heartbeatJobBody = z.object({ worker: z.string().min(1) });
+
+/** The session artifacts a worker mints and reports for delivery (C2 / D-05). */
+export const sessionArtifactsDto = z.object({
+  bearer: z.string().optional(),
+  cookies: z.string().optional(),
+  mintedAt: z.string().optional(),
+  expiresAt: z.string().optional(),
+});
+
+/** POST /api/v1/jobs/:id/report — a worker reports its scraped entries + session + telemetry. */
+export const reportJobBody = z.object({
+  worker: z.string().min(1),
+  result: z.object({
+    entries: z.array(subscriptionEntrySchema),
+    session: sessionArtifactsDto.optional(),
+    telemetry: jsonObject.optional(),
+    summary: jsonObject.optional(),
+  }),
+});
+
+export const reportJobResponse = z.object({
+  jobId: z.string(),
+  runId: z.string().nullable(),
+  status: z.enum(['ok', 'warn']),
+  counts: z.record(z.string(), z.number()),
+  merged: z.object({ added: z.number(), updated: z.number() }),
+  projected: z.object({ libraryId: z.string(), dir: z.string() }).optional(),
+  credential: z.object({ bearer: z.boolean(), cookies: z.boolean() }).optional(),
+});
+
+/** POST /api/v1/jobs/:id/fail — a worker reports a failure (retryable → requeue; else finalize error). */
+export const failJobBody = z.object({
+  worker: z.string().min(1),
+  error: z.string().min(1),
+  retryable: z.boolean(),
+  alarm: z
+    .object({
+      kind: z.enum(['login', 'bearer_capture', 'selector_drift', 'scroll_timeout']),
+      message: z.string().optional(),
+    })
+    .optional(),
+});
+
+export const failJobResponse = z.object({
+  status: z.enum(['requeued', 'error']),
+  attempts: z.number(),
+});
