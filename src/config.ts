@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { AuthMode } from './api/auth';
 
 /**
  * Connection config = environment/secrets only (DESIGN-045 D-01). Nothing behavioral lives in
@@ -8,6 +9,13 @@ const envSchema = z.object({
   DATABASE_URL: z.string().optional(),
   /** D-21 — a single API key guards the API (comma-separated for rotation, ESO-friendly). */
   YTDRIVARR_API_KEYS: z.string().default(''),
+  /**
+   * D-21 (extended, owner 2026-07-20) — the API gate mode. `api-key` (default, for public reuse)
+   * requires a key on every `/api/v1` request; `open` requires NO key for any request — the
+   * keyless-on-LAN pattern for a deploy whose ingress is LAN-only (D-17), matching Sonarr's
+   * "Authentication: Disabled for Local Addresses".
+   */
+  AUTH_MODE: z.enum(['api-key', 'open']).default('api-key'),
   PORT: z.coerce.number().int().positive().default(8080),
   LOG_LEVEL: z.string().default('info'),
   /** D-14 — the base of the downloader-mounted projection volume (per-Library projectionPath is
@@ -26,6 +34,7 @@ const envSchema = z.object({
 export interface AppConfig {
   databaseUrl: string | undefined;
   apiKeys: string[];
+  authMode: AuthMode;
   port: number;
   logLevel: string;
   projectionRoot: string | undefined;
@@ -47,6 +56,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   return {
     databaseUrl: parsed.DATABASE_URL,
     apiKeys,
+    authMode: parsed.AUTH_MODE,
     port: parsed.PORT,
     logLevel: parsed.LOG_LEVEL,
     projectionRoot: parsed.PROJECTION_ROOT,

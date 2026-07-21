@@ -2,7 +2,7 @@ import { Hono, type Context } from 'hono';
 import { z } from 'zod';
 import { logger } from '../logger';
 import { AuthError, ConflictError, NotFoundError, ValidationError } from '../errors';
-import { apiKeyAuth, apiKeyLabel } from './auth';
+import { apiKeyAuth, apiKeyLabel, type AuthMode } from './auth';
 import { buildOpenApiDocument, type OpenApiRoute } from './openapi';
 import { registerConsole } from './console';
 import {
@@ -68,6 +68,8 @@ interface RouteDef extends OpenApiRoute {
 
 export interface CreateAppOptions {
   apiKeys: readonly string[];
+  /** D-21 — API gate mode. Defaults to `api-key` (a key is required); `open` needs no key (LAN-only). */
+  authMode?: AuthMode;
   projectionRoot?: string;
   /** D-05 — base for a Library's relative credentialPath (bearer.txt / cookies.txt delivery). */
   credentialRoot?: string;
@@ -573,7 +575,7 @@ function buildRoutes(opts: CreateAppOptions): RouteDef[] {
 
 export function createApp(opts: CreateAppOptions): Hono {
   const app = new Hono();
-  const authMw = apiKeyAuth(opts.apiKeys);
+  const authMw = apiKeyAuth(opts.apiKeys, opts.authMode);
   const routes = buildRoutes(opts);
 
   app.get('/livez', (c) => c.json({ status: 'ok' }));
