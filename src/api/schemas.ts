@@ -97,7 +97,12 @@ export const providerDto = z.object({
       mode: z.enum(['event_driven', 'cron']),
       cron: z.string().optional(),
       safetyCron: z.string().optional(),
+      /** DEPRECATED (issue #23) — the single-knob SLA; prefer the warn/error pair below. */
       credentialRefreshSec: z.number().optional(),
+      /** bearer-freshness WARN threshold in seconds (a missed nightly mint). */
+      credentialWarnSec: z.number().optional(),
+      /** bearer-freshness ERROR threshold in seconds (approaching real expiry). */
+      credentialErrorSec: z.number().optional(),
     })
     .optional(),
 });

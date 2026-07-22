@@ -109,6 +109,22 @@ export function humanCron(expr: string): string {
   return `${String(match[2]).padStart(2, '0')}:${String(match[1]).padStart(2, '0')}`;
 }
 
+/**
+ * Render a cron provider's bearer-freshness SLA as ` · bearer SLA warn 30h / error 52h` (issue #23),
+ * mirroring the `resolveCredentialSla` fallback: prefer the explicit warn/error pair, else derive from
+ * the deprecated `credentialRefreshSec` (warn = it, error = 2×). Empty when no SLA is declared.
+ */
+export function bearerSlaText(scheduling: {
+  credentialRefreshSec?: number;
+  credentialWarnSec?: number;
+  credentialErrorSec?: number;
+}): string {
+  const warnSec = scheduling.credentialWarnSec ?? scheduling.credentialRefreshSec;
+  if (warnSec === undefined || warnSec <= 0) return '';
+  const errorSec = scheduling.credentialErrorSec ?? warnSec * 2;
+  return ` · bearer SLA warn ${Math.round(warnSec / 3600)}h / error ${Math.round(errorSec / 3600)}h`;
+}
+
 export function formatDuration(startedAt: string, finishedAt: string | null): string {
   if (!finishedAt) return 'running';
   const ms = new Date(finishedAt).getTime() - new Date(startedAt).getTime();

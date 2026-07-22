@@ -1,5 +1,5 @@
 import { api } from '../api';
-import { el, humanCron, kindChip, relTime, statusDot } from '../dom';
+import { el, humanCron, bearerSlaText, kindChip, relTime, statusDot } from '../dom';
 import { toolbar } from '../toolbar';
 import type { HealthDto, ProviderDto, SourceDto, SourceHealthDto } from '../types';
 
@@ -23,11 +23,7 @@ function schedulingLine(provider: ProviderDto): string {
   const s = provider.scheduling;
   if (!s) return '—';
   if (s.mode === 'cron') {
-    const sla =
-      s.credentialRefreshSec !== undefined
-        ? ` · bearer refresh SLA ${Math.round(s.credentialRefreshSec / 3600)}h`
-        : '';
-    return `Nightly scrape ${humanCron(s.cron ?? '')}${sla}`;
+    return `Nightly scrape ${humanCron(s.cron ?? '')}${bearerSlaText(s)}`;
   }
   return `Event-driven: re-emit on Source edit${
     s.safetyCron ? ` · daily safety re-emit ${humanCron(s.safetyCron)}` : ''

@@ -75,6 +75,7 @@ export interface RunSummaryDto {
     bearerMintedAt?: string | null;
     bearerAgeSec?: number | null;
     credentialRefreshSec?: number | null;
+    credentialErrorSec?: number | null;
     credentialAgeStatus?: string;
     scrollsPerformed?: number | null;
     selectorDriftHits?: number;
@@ -110,6 +111,8 @@ export interface ProviderDto {
     cron?: string;
     safetyCron?: string;
     credentialRefreshSec?: number;
+    credentialWarnSec?: number;
+    credentialErrorSec?: number;
   };
 }
 

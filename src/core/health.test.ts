@@ -4,24 +4,37 @@ import { jobs, libraries, providerState, runs, sources } from '../db/schema';
 import { createLibrary } from '../domain/libraries';
 import { createSource } from '../domain/sources';
 import { startRun, finishRun } from '../domain/runs';
-import { PELOTON_CREDENTIAL_REFRESH_SEC } from '../providers/peloton';
+import {
+  PELOTON_CREDENTIAL_WARN_SEC,
+  PELOTON_CREDENTIAL_ERROR_SEC,
+  PELOTON_CREDENTIAL_SLA,
+} from '../providers/peloton';
 import { createStateStore } from './state-store';
 import { collectHealth, credentialAgeAlarm } from './health';
 
 /** Health alarms (DESIGN-045 D-10): the credential-age policy (pure thresholds) + the collectHealth
  * enrichment surfacing credential age + selector drift per source. */
 
-describe('credentialAgeAlarm — the threshold policy', () => {
+describe('credentialAgeAlarm — the threshold policy (issue #23: nightly-mint cadence)', () => {
   const mintedAgo = (sec: number) => new Date(Date.now() - sec * 1000).toISOString();
+  const H = 3600;
 
-  it('is ok below the SLA, warns at 1×, errors at 2×', () => {
-    expect(credentialAgeAlarm(mintedAgo(100), 21600).status).toBe('ok');
-    expect(credentialAgeAlarm(mintedAgo(21600), 21600).status).toBe('warn');
-    expect(credentialAgeAlarm(mintedAgo(43300), 21600).status).toBe('error');
+  it('is ok when fresh, warns past the warn edge (a missed nightly), errors past the error edge', () => {
+    // The Peloton default SLA: warn 30h (108000s), error 52h (187200s).
+    expect(credentialAgeAlarm(mintedAgo(14 * H), PELOTON_CREDENTIAL_SLA).status).toBe('ok'); // a normal afternoon
+    expect(credentialAgeAlarm(mintedAgo(31 * H), PELOTON_CREDENTIAL_SLA).status).toBe('warn'); // a missed nightly
+    expect(credentialAgeAlarm(mintedAgo(53 * H), PELOTON_CREDENTIAL_SLA).status).toBe('error'); // approaching real expiry
+  });
+
+  it('honors an explicit warn/error SLA pair independently of any 1×/2× multiplier', () => {
+    const sla = { warnSec: 108000, errorSec: 187200 };
+    expect(credentialAgeAlarm(mintedAgo(107999), sla).status).toBe('ok');
+    expect(credentialAgeAlarm(mintedAgo(108001), sla).status).toBe('warn');
+    expect(credentialAgeAlarm(mintedAgo(187201), sla).status).toBe('error');
   });
 
   it('reports the computed age', () => {
-    const alarm = credentialAgeAlarm(mintedAgo(500), 21600);
+    const alarm = credentialAgeAlarm(mintedAgo(500), PELOTON_CREDENTIAL_SLA);
     expect(alarm.ageSec).toBeGreaterThanOrEqual(499);
     expect(alarm.ageSec).toBeLessThanOrEqual(510);
   });
@@ -114,7 +127,7 @@ describe('collectHealth — per-source health models', () => {
 
   it('surfaces the credential age for a Peloton source with a minted session', async () => {
     const src = await seedPeloton();
-    // a session minted ~50000s ago (> the 21600s SLA → the age is surfaced as an alarm signal).
+    // a session minted ~50000s ago — the age is surfaced on the source health regardless of status.
     await setSession(50000);
     const health = await collectHealth(t.db);
     const sh = health.sources.find((s) => s.sourceId === src.id);
@@ -143,7 +156,7 @@ describe('collectHealth — per-source health models', () => {
 
   it('is ok with a fresh bearer + an ok run — and NEVER core-side-fails on missing worker creds', async () => {
     const src = await seedPeloton();
-    await setSession(100); // well within the 6h SLA
+    await setSession(100); // fresh — well within the warn SLA
     await okRun(src.id);
 
     const health = await collectHealth(t.db);
@@ -166,23 +179,32 @@ describe('collectHealth — per-source health models', () => {
     expect(sh?.message ?? '').not.toMatch(/missing.*credential/i);
   });
 
-  it('warns on a bearer aged past 1× the SLA (with an otherwise-ok run)', async () => {
+  it('warns on a bearer aged past the warn SLA — a missed nightly (with an otherwise-ok run)', async () => {
     const src = await seedPeloton();
-    await setSession(PELOTON_CREDENTIAL_REFRESH_SEC + 100); // ≥ 1× SLA, < 2×
+    await setSession(PELOTON_CREDENTIAL_WARN_SEC + 100); // ≥ warn, < error
     await okRun(src.id);
     const health = await collectHealth(t.db);
     const sh = health.sources.find((s) => s.sourceId === src.id);
     expect(sh?.status).toBe('warn');
-    expect(sh?.credentialAgeSec).toBeGreaterThanOrEqual(PELOTON_CREDENTIAL_REFRESH_SEC);
+    expect(sh?.credentialAgeSec).toBeGreaterThanOrEqual(PELOTON_CREDENTIAL_WARN_SEC);
   });
 
-  it('errors on a bearer aged past 2× the SLA', async () => {
+  it('errors on a bearer aged past the error SLA — approaching real expiry', async () => {
     const src = await seedPeloton();
-    await setSession(PELOTON_CREDENTIAL_REFRESH_SEC * 2 + 100);
+    await setSession(PELOTON_CREDENTIAL_ERROR_SEC + 100);
     await okRun(src.id);
     const health = await collectHealth(t.db);
     const sh = health.sources.find((s) => s.sourceId === src.id);
     expect(sh?.status).toBe('error');
+  });
+
+  it('is ok on a bearer most of a day old — the false-alarm the nightly-cadence tune fixes', async () => {
+    const src = await seedPeloton();
+    await setSession(14 * 3600); // 14h old — a perfectly healthy afternoon, was RED under the old 6h SLA
+    await okRun(src.id);
+    const health = await collectHealth(t.db);
+    const sh = health.sources.find((s) => s.sourceId === src.id);
+    expect(sh?.status).toBe('ok');
   });
 
   it('errors when the last run failed with alarms (a worker-side failure surfaces honestly)', async () => {

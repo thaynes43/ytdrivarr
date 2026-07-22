@@ -138,6 +138,12 @@ export function toProviderDto(provider: SourceProvider): ProviderDto {
             ...(provider.scheduling.credentialRefreshSec !== undefined
               ? { credentialRefreshSec: provider.scheduling.credentialRefreshSec }
               : {}),
+            ...(provider.scheduling.credentialWarnSec !== undefined
+              ? { credentialWarnSec: provider.scheduling.credentialWarnSec }
+              : {}),
+            ...(provider.scheduling.credentialErrorSec !== undefined
+              ? { credentialErrorSec: provider.scheduling.credentialErrorSec }
+              : {}),
           }
         : {
             mode: 'event_driven',

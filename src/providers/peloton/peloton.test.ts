@@ -7,7 +7,8 @@ import {
   effectivePelotonCap,
   pelotonProvider,
   pelotonSettingsSchema,
-  PELOTON_CREDENTIAL_REFRESH_SEC,
+  PELOTON_CREDENTIAL_WARN_SEC,
+  PELOTON_CREDENTIAL_ERROR_SEC,
 } from './index';
 import {
   parseDurationMinutes,
@@ -51,7 +52,8 @@ describe('pelotonProvider — C1 contract', () => {
     expect(typeof pelotonProvider.describeAssets).toBe('function');
     expect(pelotonProvider.scheduling).toMatchObject({
       mode: 'cron',
-      credentialRefreshSec: PELOTON_CREDENTIAL_REFRESH_SEC,
+      credentialWarnSec: PELOTON_CREDENTIAL_WARN_SEC,
+      credentialErrorSec: PELOTON_CREDENTIAL_ERROR_SEC,
     });
   });
 

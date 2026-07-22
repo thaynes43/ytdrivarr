@@ -6,6 +6,7 @@ import type { Database, DbClient } from '../db';
 import { listProviders } from './registry';
 import { resolveProjectionDir } from './projection';
 import { credentialAgeStatus, type RunSummary } from '../domain/run-summary';
+import { resolveCredentialSla, type CredentialSla } from '../contracts/scheduling';
 import { listLibraries } from '../domain/libraries';
 import { listSources } from '../domain/sources';
 import { countEntriesBySource } from '../domain/entries';
@@ -192,14 +193,14 @@ export async function collectMetrics(opts: CollectMetricsOptions = {}): Promise<
     })),
   });
 
-  // The provider's bearer-freshness SLA (D-07), as a gauge so Grafana can threshold against it.
-  const slaByProvider = new Map<string, number>();
+  // The provider's bearer-freshness SLA (issue #23 / D-07), as gauges so Grafana can threshold the
+  // bearer age against the warn + error edges (tuned to the nightly-mint cadence, not a 1×/2× knob).
+  const slaByProvider = new Map<string, CredentialSla>();
   const providerByNamespace = new Map<string, string>();
   for (const p of providers) {
     providerByNamespace.set(p.stateNamespace, p.id);
-    if (p.scheduling.mode === 'cron' && p.scheduling.credentialRefreshSec) {
-      slaByProvider.set(p.id, p.scheduling.credentialRefreshSec);
-    }
+    const sla = resolveCredentialSla(p.scheduling);
+    if (sla) slaByProvider.set(p.id, sla);
   }
 
   let dbReachable = 1;
@@ -673,9 +674,11 @@ export async function collectMetrics(opts: CollectMetricsOptions = {}): Promise<
     `);
     const bearerAge: MetricSample[] = [];
     const bearerSla: MetricSample[] = [];
+    const bearerSlaError: MetricSample[] = [];
     const credStatus: MetricSample[] = [];
     for (const [provider, sla] of slaByProvider) {
-      bearerSla.push({ labels: { provider }, value: sla });
+      bearerSla.push({ labels: { provider }, value: sla.warnSec });
+      bearerSlaError.push({ labels: { provider }, value: sla.errorSec });
     }
     for (const row of sessionRes.rows as unknown as Array<{
       namespace: string;
@@ -701,13 +704,19 @@ export async function collectMetrics(opts: CollectMetricsOptions = {}): Promise<
     });
     metrics.push({
       name: 'ytdrivarr_bearer_sla_seconds',
-      help: 'The provider bearer-freshness SLA (D-07) as a gauge, for Grafana thresholds against the age.',
+      help: 'The bearer-freshness WARN threshold (issue #23) as a gauge, for Grafana thresholds against the age.',
       type: 'gauge',
       samples: bearerSla,
     });
     metrics.push({
+      name: 'ytdrivarr_bearer_sla_error_seconds',
+      help: 'The bearer-freshness ERROR threshold (issue #23) as a gauge — the age at which the token nears real expiry.',
+      type: 'gauge',
+      samples: bearerSlaError,
+    });
+    metrics.push({
       name: 'ytdrivarr_credential_age_status',
-      help: 'Credential-age status code: 0=ok 1=warn(>=1x SLA) 2=error(>=2x SLA) 3=unknown.',
+      help: 'Credential-age status code: 0=ok 1=warn(>=warn SLA) 2=error(>=error SLA) 3=unknown.',
       type: 'gauge',
       samples: credStatus,
     });

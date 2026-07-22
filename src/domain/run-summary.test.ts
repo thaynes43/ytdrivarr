@@ -41,7 +41,7 @@ describe('buildRunSummary + renderRunSummaryMarkdown', () => {
       loginOk: true,
     },
     sessionMintedAt: mintedAt,
-    credentialRefreshSec: 21600,
+    credentialSla: { warnSec: 108000, errorSec: 187200 },
     now,
   });
 
@@ -62,7 +62,9 @@ describe('buildRunSummary + renderRunSummaryMarkdown', () => {
 
   it('computes bearer age + credential-age status against the SLA', () => {
     expect(summary.health.bearerAgeSec).toBe(3600);
-    expect(summary.health.credentialAgeStatus).toBe('ok'); // 3600s < 21600s SLA
+    expect(summary.health.credentialAgeStatus).toBe('ok'); // 3600s < 108000s warn SLA
+    expect(summary.health.credentialRefreshSec).toBe(108000); // the warn edge (SLA)
+    expect(summary.health.credentialErrorSec).toBe(187200); // the error edge
     expect(summary.health.authOk).toBe(true);
     expect(summary.health.selectorDriftHits).toBe(0);
   });
@@ -111,12 +113,14 @@ describe('buildRunSummary + renderRunSummaryMarkdown', () => {
   });
 });
 
-describe('credentialAgeStatus thresholds', () => {
-  it('warns at 1× and errors at 2× the SLA', () => {
-    expect(credentialAgeStatus(100, 21600)).toBe('ok');
-    expect(credentialAgeStatus(21600, 21600)).toBe('warn');
-    expect(credentialAgeStatus(43200, 21600)).toBe('error');
-    expect(credentialAgeStatus(null, 21600)).toBe('unknown');
+describe('credentialAgeStatus thresholds (issue #23: explicit warn/error edges)', () => {
+  const sla = { warnSec: 108000, errorSec: 187200 }; // 30h / 52h
+
+  it('is ok when fresh, warns past the warn edge, errors past the error edge', () => {
+    expect(credentialAgeStatus(14 * 3600, sla)).toBe('ok'); // 14h — a normal afternoon
+    expect(credentialAgeStatus(31 * 3600, sla)).toBe('warn'); // 31h — a missed nightly
+    expect(credentialAgeStatus(53 * 3600, sla)).toBe('error'); // 53h — approaching real expiry
+    expect(credentialAgeStatus(null, sla)).toBe('unknown');
     expect(credentialAgeStatus(100, null)).toBe('unknown');
   });
 });

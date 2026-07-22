@@ -80,9 +80,30 @@ export function effectivePelotonCap(settings: Pick<PelotonSettings, 'maxClassesP
 /** The credentials ESO injects into the provider context (C2 — the core injects, never hardcodes). */
 export const PELOTON_SECRET_KEYS = ['PELOTON_USERNAME', 'PELOTON_PASSWORD'] as const;
 
-/** 6h bearer-freshness cadence (D-07) — tighter than the token's expiry so the downloader never
- * runs an expired bearer. The credential-age alarm (D-10) escalates against this SLA. */
-export const PELOTON_CREDENTIAL_REFRESH_SEC = 21600;
+/** Read a positive-integer seconds override from the environment, else the default. */
+function envSec(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === '') return fallback;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+/**
+ * Bearer-freshness SLA (issue #23 / D-07/D-10) — the bearer is minted ONCE nightly (~22:00) and
+ * carries ~48h real validity, so a healthy token is routinely most of a day old. The credential-age
+ * alarm therefore signals a MISSED nightly mint, not a normal afternoon:
+ *   - WARN at ~30h (a nightly mint was skipped), default `108000s`.
+ *   - ERROR at ~52h (approaching the token's real expiry), default `187200s`.
+ * Both are env-overridable (`PELOTON_CREDENTIAL_WARN_SEC` / `PELOTON_CREDENTIAL_ERROR_SEC`).
+ */
+export const PELOTON_CREDENTIAL_WARN_SEC = envSec('PELOTON_CREDENTIAL_WARN_SEC', 108000);
+export const PELOTON_CREDENTIAL_ERROR_SEC = envSec('PELOTON_CREDENTIAL_ERROR_SEC', 187200);
+
+/** The resolved bearer-freshness SLA pair (the credential-age alarm, metrics, run-summary read this). */
+export const PELOTON_CREDENTIAL_SLA = {
+  warnSec: PELOTON_CREDENTIAL_WARN_SEC,
+  errorSec: PELOTON_CREDENTIAL_ERROR_SEC,
+} as const;
 
 /** The provider state namespace + the session key within it (C5 / D-08). */
 export const PELOTON_STATE_NAMESPACE = 'peloton';
@@ -103,19 +124,22 @@ export const pelotonProvider: SourceProvider = {
   // download-archive keeps them downloaded (core/emit-window.ts).
   emitWindow: true,
   settingsSchema: pelotonSettingsSchema,
-  // Nightly scrape (the donor's 22:00 lineage) + the 6h bearer-freshness SLA (D-07/D-15).
+  // Nightly scrape (the donor's 22:00 lineage) + the bearer-freshness SLA tuned to that cadence
+  // (issue #23): warn at a missed nightly (~30h), error approaching real expiry (~52h) — D-07/D-15.
   scheduling: {
     mode: 'cron',
     cron: '0 22 * * *',
-    credentialRefreshSec: PELOTON_CREDENTIAL_REFRESH_SEC,
+    credentialWarnSec: PELOTON_CREDENTIAL_WARN_SEC,
+    credentialErrorSec: PELOTON_CREDENTIAL_ERROR_SEC,
   },
   stateNamespace: PELOTON_STATE_NAMESPACE,
 
   /**
    * C1 PROBE (D-04) — creds present in the injected context + the age of the last minted session.
    * The heavy reachability check (an actual login) is the worker's; the core probe reports whether
-   * the credential lifecycle is HEALTHY. The credential-age THRESHOLDS (warn 1×/error 2× the SLA)
-   * are applied core-side in `collectHealth` (D-10) so the alarm policy lives in one place.
+   * the credential lifecycle is HEALTHY. The credential-age THRESHOLDS (warn/error from the resolved
+   * bearer-freshness SLA, issue #23) are applied core-side in `collectHealth` (D-10) so the alarm
+   * policy lives in one place.
    */
   async test(ctx: ProviderContext) {
     const checkedAt = new Date().toISOString();
