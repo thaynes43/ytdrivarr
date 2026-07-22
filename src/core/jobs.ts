@@ -13,7 +13,7 @@ import { buildRunSummary, runSummaryToJson } from '../domain/run-summary';
 import {
   effectivePelotonCap,
   pelotonSettingsSchema,
-  PELOTON_CREDENTIAL_REFRESH_SEC,
+  PELOTON_CREDENTIAL_SLA,
   type PelotonSettings,
 } from '../providers/peloton';
 import { buildFolderConfig, type FolderConfig } from '../providers/peloton/folder-mapping';
@@ -437,7 +437,7 @@ export async function failJob(input: FailJobInput): Promise<FailJobResult> {
     const summary = buildRunSummary({
       counts,
       telemetry: mergedTelemetry,
-      credentialRefreshSec: PELOTON_CREDENTIAL_REFRESH_SEC,
+      credentialSla: PELOTON_CREDENTIAL_SLA,
     });
     await finishRun({
       id: job.runId,

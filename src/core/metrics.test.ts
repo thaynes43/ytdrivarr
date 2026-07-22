@@ -8,7 +8,11 @@ import { createLibrary } from '../domain/libraries';
 import { createSource } from '../domain/sources';
 import { startRun, finishRun } from '../domain/runs';
 import { buildRunSummary, runSummaryToJson } from '../domain/run-summary';
-import { PELOTON_CREDENTIAL_REFRESH_SEC } from '../providers/peloton';
+import {
+  PELOTON_CREDENTIAL_WARN_SEC,
+  PELOTON_CREDENTIAL_ERROR_SEC,
+  PELOTON_CREDENTIAL_SLA,
+} from '../providers/peloton';
 import { createStateStore } from './state-store';
 import { collectMetrics, renderExposition, type Metric, type MetricSample } from './metrics';
 
@@ -216,7 +220,7 @@ describe('collectMetrics — the exposition surface', () => {
     const summary = buildRunSummary({
       counts,
       telemetry,
-      credentialRefreshSec: PELOTON_CREDENTIAL_REFRESH_SEC,
+      credentialSla: PELOTON_CREDENTIAL_SLA,
     });
     const run = await startRun({
       scope: 'source',
@@ -305,19 +309,31 @@ describe('collectMetrics — the exposition surface', () => {
     expect(valueFor(m, 'ytdrivarr_last_run_status', { provider: 'core' })).toBe(0);
   });
 
-  it('surfaces bearer age vs SLA + credential status from provider state', async () => {
+  it('surfaces bearer age vs the warn+error SLA gauges + credential status from provider state', async () => {
     await seedPelotonLibrary();
     await createStateStore('peloton', t.db).set('session', {
-      mintedAt: mintedAgo(PELOTON_CREDENTIAL_REFRESH_SEC + 500),
+      mintedAt: mintedAgo(PELOTON_CREDENTIAL_WARN_SEC + 500), // past warn, before error
     });
     const m = await collectMetrics({ db: t.db });
     expect(valueFor(m, 'ytdrivarr_bearer_sla_seconds', { provider: 'peloton' })).toBe(
-      PELOTON_CREDENTIAL_REFRESH_SEC,
+      PELOTON_CREDENTIAL_WARN_SEC,
+    );
+    expect(valueFor(m, 'ytdrivarr_bearer_sla_error_seconds', { provider: 'peloton' })).toBe(
+      PELOTON_CREDENTIAL_ERROR_SEC,
     );
     expect(
       valueFor(m, 'ytdrivarr_bearer_age_seconds', { provider: 'peloton' }),
-    ).toBeGreaterThanOrEqual(PELOTON_CREDENTIAL_REFRESH_SEC);
-    expect(valueFor(m, 'ytdrivarr_credential_age_status', { provider: 'peloton' })).toBe(1); // warn (>=1x SLA)
+    ).toBeGreaterThanOrEqual(PELOTON_CREDENTIAL_WARN_SEC);
+    expect(valueFor(m, 'ytdrivarr_credential_age_status', { provider: 'peloton' })).toBe(1); // warn (>= warn SLA)
+  });
+
+  it('reads OK for a bearer most of a day old — the nightly-cadence false-alarm fix (issue #23)', async () => {
+    await seedPelotonLibrary();
+    await createStateStore('peloton', t.db).set('session', {
+      mintedAt: mintedAgo(14 * 3600), // 14h — was warn under the old 6h SLA, now ok
+    });
+    const m = await collectMetrics({ db: t.db });
+    expect(valueFor(m, 'ytdrivarr_credential_age_status', { provider: 'peloton' })).toBe(0); // ok
   });
 
   it('reports job queue depth + worker heartbeat age from the jobs table', async () => {

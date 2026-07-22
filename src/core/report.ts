@@ -7,6 +7,7 @@ import {
   type SessionArtifacts,
   type SubscriptionEntry,
 } from '../contracts';
+import { resolveCredentialSla } from '../contracts/scheduling';
 import { ConflictError, NotFoundError, ValidationError } from '../errors';
 import { getProvider } from './registry';
 import { createStateStore } from './state-store';
@@ -289,15 +290,14 @@ export async function reportJob(input: ReportJobInput): Promise<ReportJobOutcome
     entries: merged.total,
   };
   const provider = getProvider(job.providerId);
-  const credentialRefreshSec =
-    provider.scheduling.mode === 'cron' ? provider.scheduling.credentialRefreshSec : undefined;
+  const credentialSla = resolveCredentialSla(provider.scheduling);
   const summary = buildRunSummary({
     counts,
     telemetry,
     ...(input.result.session?.mintedAt !== undefined
       ? { sessionMintedAt: input.result.session.mintedAt }
       : {}),
-    ...(credentialRefreshSec !== undefined ? { credentialRefreshSec } : {}),
+    ...(credentialSla !== undefined ? { credentialSla } : {}),
   });
   const status: 'ok' | 'warn' = summary.issues.length > 0 ? 'warn' : 'ok';
 

@@ -10,6 +10,8 @@
  * telemetry and lights up the full breakdown.
  */
 
+import type { CredentialSla } from '../contracts/scheduling';
+
 export interface RunSummaryActivity {
   activity: string;
   existing: number;
@@ -43,7 +45,11 @@ export interface RunSummaryHealth {
   loginOk: boolean | null;
   bearerMintedAt: string | null;
   bearerAgeSec: number | null;
+  /** the bearer-freshness WARN threshold (seconds) — the primary SLA. Named `credentialRefreshSec`
+   * for back-compat with persisted summaries; it is the warn edge (issue #23). */
   credentialRefreshSec: number | null;
+  /** the bearer-freshness ERROR threshold (seconds) — approaching real expiry (issue #23). */
+  credentialErrorSec: number | null;
   credentialAgeStatus: CredentialAgeStatus;
   scrollsPerformed: number | null;
   selectorDriftHits: number;
@@ -89,14 +95,16 @@ function num(value: unknown, fallback = 0): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
-/** Credential-age policy (D-10): warn at ≥1× the SLA, error at ≥2× (matches collectHealth). */
+/** Credential-age policy (issue #23 / D-10): WARN once the bearer is ≥ the warn threshold, ERROR
+ * once ≥ the error threshold (matches collectHealth). The two thresholds come from the resolved
+ * bearer-freshness SLA — no more implicit 1×/2× multiplier. */
 export function credentialAgeStatus(
   ageSec: number | null,
-  refreshSec: number | null,
+  sla: CredentialSla | null,
 ): CredentialAgeStatus {
-  if (ageSec === null || refreshSec === null || refreshSec <= 0) return 'unknown';
-  if (ageSec >= refreshSec * 2) return 'error';
-  if (ageSec >= refreshSec) return 'warn';
+  if (ageSec === null || sla === null || sla.warnSec <= 0) return 'unknown';
+  if (sla.errorSec > 0 && ageSec >= sla.errorSec) return 'error';
+  if (ageSec >= sla.warnSec) return 'warn';
   return 'ok';
 }
 
@@ -105,8 +113,8 @@ export interface BuildRunSummaryOptions {
   telemetry?: Record<string, unknown>;
   /** the minted-session timestamp (report path) — falls back to telemetry.bearerMintedAt. */
   sessionMintedAt?: string;
-  /** the provider's bearer-freshness SLA (D-07), for the credential-age status. */
-  credentialRefreshSec?: number;
+  /** the provider's resolved bearer-freshness SLA (issue #23 / D-07), for the credential-age status. */
+  credentialSla?: CredentialSla;
   /** evaluation clock (tests inject a fixed now). */
   now?: number;
 }
@@ -156,15 +164,16 @@ export function buildRunSummary(opts: BuildRunSummaryOptions): RunSummary {
   const mintedAt = opts.sessionMintedAt ?? telemetry.bearerMintedAt ?? null;
   const bearerAgeSec =
     mintedAt !== null ? Math.max(0, Math.floor((now - Date.parse(mintedAt)) / 1000)) : null;
-  const refreshSec = opts.credentialRefreshSec ?? null;
+  const sla = opts.credentialSla ?? null;
 
   const health: RunSummaryHealth = {
     authOk: telemetry.authOk ?? null,
     loginOk: telemetry.loginOk ?? null,
     bearerMintedAt: mintedAt,
     bearerAgeSec,
-    credentialRefreshSec: refreshSec,
-    credentialAgeStatus: credentialAgeStatus(bearerAgeSec, refreshSec),
+    credentialRefreshSec: sla?.warnSec ?? null,
+    credentialErrorSec: sla?.errorSec ?? null,
+    credentialAgeStatus: credentialAgeStatus(bearerAgeSec, sla),
     scrollsPerformed:
       telemetry.scrollsPerformed !== undefined ? num(telemetry.scrollsPerformed) : null,
     selectorDriftHits: num(telemetry.selectorDriftHits),
@@ -247,8 +256,9 @@ export function renderRunSummaryMarkdown(summary: RunSummary): string {
         : h.credentialAgeStatus === 'unknown'
           ? ''
           : WARN_MARK;
+    const errorPart = h.credentialErrorSec !== null ? ` / error ${h.credentialErrorSec}s` : '';
     lines.push(
-      `- **Credential age vs SLA:** ${h.bearerAgeSec ?? '?'}s / ${h.credentialRefreshSec}s ${mark} (${h.credentialAgeStatus})`,
+      `- **Credential age vs SLA:** ${h.bearerAgeSec ?? '?'}s / warn ${h.credentialRefreshSec}s${errorPart} ${mark} (${h.credentialAgeStatus})`,
     );
   }
   if (h.scrollsPerformed !== null) lines.push(`- **Scrolls performed:** ${h.scrollsPerformed}`);

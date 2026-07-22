@@ -1,5 +1,5 @@
 import { api } from '../api';
-import { el, humanCron, icon, relTime } from '../dom';
+import { el, humanCron, bearerSlaText, icon, relTime } from '../dom';
 import { toolbar } from '../toolbar';
 import type { HealthDto, ProviderDto, SourceHealthDto, SystemStatusDto } from '../types';
 
@@ -50,11 +50,7 @@ function schedulingText(provider: ProviderDto): string {
   const s = provider.scheduling;
   if (!s) return '—';
   if (s.mode === 'cron') {
-    return `cron ${humanCron(s.cron ?? '')}${
-      s.credentialRefreshSec !== undefined
-        ? ` · bearer SLA ${Math.round(s.credentialRefreshSec / 3600)}h`
-        : ''
-    }`;
+    return `cron ${humanCron(s.cron ?? '')}${bearerSlaText(s)}`;
   }
   return `event-driven${s.safetyCron ? ` · safety ${humanCron(s.safetyCron)}` : ''}`;
 }

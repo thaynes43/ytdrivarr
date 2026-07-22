@@ -5,6 +5,7 @@ import { getWorkerLivenessForProvider } from './jobs';
 import { listSources } from '../domain/sources';
 import { getLastRunForProvider, type RunStatus } from '../domain/runs';
 import type { Runtime, SourceProvider } from '../contracts';
+import { resolveCredentialSla, type CredentialSla } from '../contracts/scheduling';
 import type { Source } from '../db/schema';
 import type { DbClient } from '../db';
 
@@ -13,8 +14,9 @@ import type { DbClient } from '../db';
  *
  *  - **`in_core` providers (PROBE):** run the provider's own `test()` reachability/credential probe,
  *    then ENRICH it with the two first-class alarms — **credential-age** (now − the provider's
- *    last-minted-session time vs its bearer-freshness SLA `credentialRefreshSec`, D-07: WARN at ≥1×,
- *    ERROR at ≥2×) and **selector-drift** (the last run reported `selectorDriftHits > 0`: WARN).
+ *    last-minted-session time vs its resolved bearer-freshness SLA, issue #23: WARN once the bearer
+ *    is past the warn age, ERROR once past the error age) and **selector-drift** (the last run
+ *    reported `selectorDriftHits > 0`: WARN).
  *
  *  - **`out_of_process` providers (OBSERVED, D-03/D-05):** their credentials live ONLY in the
  *    plugin-owned worker (the D-05/D-21 split) — the core never holds them, so calling `test()` here
@@ -78,34 +80,36 @@ export interface CredentialAgeAlarm {
 }
 
 /**
- * The credential-age alarm policy (D-10) — a PURE function so the thresholds are unit-testable
- * without a DB: WARN once the bearer is at least one SLA old, ERROR at two. Returns the computed age
- * so the caller can surface it on the source health.
+ * The credential-age alarm policy (issue #23 / D-10) — a PURE function so the thresholds are
+ * unit-testable without a DB: WARN once the bearer is at least the SLA's warn age, ERROR once it is
+ * at least the error age. Tuned to the nightly-mint cadence (warn = a missed nightly, error =
+ * approaching real expiry), NOT a 1×/2× multiplier. Returns the computed age so the caller can
+ * surface it on the source health.
  */
 export function credentialAgeAlarm(
   mintedAtIso: string,
-  refreshSec: number,
+  sla: CredentialSla,
   now: number = Date.now(),
 ): CredentialAgeAlarm {
   const ageSec = Math.max(0, Math.floor((now - Date.parse(mintedAtIso)) / 1000));
-  if (refreshSec > 0 && ageSec >= refreshSec * 2) {
+  if (sla.errorSec > 0 && ageSec >= sla.errorSec) {
     return {
       status: 'error',
       ageSec,
-      message: `bearer minted ${ageSec}s ago ≥ 2× SLA (${refreshSec}s)`,
+      message: `bearer minted ${ageSec}s ago ≥ error SLA (${sla.errorSec}s)`,
     };
   }
-  if (refreshSec > 0 && ageSec >= refreshSec) {
+  if (sla.warnSec > 0 && ageSec >= sla.warnSec) {
     return {
       status: 'warn',
       ageSec,
-      message: `bearer minted ${ageSec}s ago ≥ SLA (${refreshSec}s)`,
+      message: `bearer minted ${ageSec}s ago ≥ warn SLA (${sla.warnSec}s)`,
     };
   }
   return {
     status: 'ok',
     ageSec,
-    message: `bearer minted ${ageSec}s ago (within SLA ${refreshSec}s)`,
+    message: `bearer minted ${ageSec}s ago (within SLA: warn ${sla.warnSec}s / error ${sla.errorSec}s)`,
   };
 }
 
@@ -129,15 +133,14 @@ async function probedHealth(
 
   // --- credential-age alarm (D-10) — read the provider's last-minted-session directly, so the
   //     alarm fires even when test() reported another status. Only for providers that declare a
-  //     bearer-freshness SLA (cron providers with credentialRefreshSec).
-  const refreshSec =
-    provider.scheduling.mode === 'cron' ? provider.scheduling.credentialRefreshSec : undefined;
-  if (refreshSec && refreshSec > 0) {
+  //     bearer-freshness SLA (cron providers with a resolved warn/error pair).
+  const sla = resolveCredentialSla(provider.scheduling);
+  if (sla) {
     const session = await createStateStore(provider.stateNamespace, exec).get<{
       mintedAt?: string;
     }>('session');
     if (session?.mintedAt) {
-      const alarm = credentialAgeAlarm(session.mintedAt, refreshSec);
+      const alarm = credentialAgeAlarm(session.mintedAt, sla);
       credentialAgeSec = alarm.ageSec;
       if (alarm.status !== 'ok') {
         status = escalate(status, alarm.status);
@@ -195,15 +198,14 @@ async function observedHealth(
   let workerLastSeenSec: number | undefined;
 
   // (b) bearer/credential freshness — the last-minted-session age vs the SLA (D-07/D-10).
-  const refreshSec =
-    provider.scheduling.mode === 'cron' ? provider.scheduling.credentialRefreshSec : undefined;
+  const sla = resolveCredentialSla(provider.scheduling);
   const session = await createStateStore(provider.stateNamespace, exec).get<{
     mintedAt?: string;
   }>('session');
   if (session?.mintedAt) {
     bearerMintedAt = session.mintedAt;
-    if (refreshSec && refreshSec > 0) {
-      const alarm = credentialAgeAlarm(session.mintedAt, refreshSec);
+    if (sla) {
+      const alarm = credentialAgeAlarm(session.mintedAt, sla);
       credentialAgeSec = alarm.ageSec;
       notes.push(alarm.message);
       if (alarm.status !== 'ok') status = escalate(status, alarm.status);
