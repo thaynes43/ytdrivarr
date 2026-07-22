@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1](https://github.com/thaynes43/ytdrivarr/compare/v0.6.0...v0.6.1) (2026-07-22)
+
+
+### Bug Fixes
+
+* calibrate bearer-freshness SLA to the nightly-mint cadence ([#23](https://github.com/thaynes43/ytdrivarr/issues/23)) ([#24](https://github.com/thaynes43/ytdrivarr/issues/24)) ([4d5add1](https://github.com/thaynes43/ytdrivarr/commit/4d5add16fb322c98b452b97baccf018f9ad80f0e))
+
 ## [0.6.0](https://github.com/thaynes43/ytdrivarr/compare/v0.5.0...v0.6.0) (2026-07-21)
 
 
