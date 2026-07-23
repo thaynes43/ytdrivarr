@@ -12,6 +12,25 @@ import type { SubscriptionEntry } from '../contracts';
  * delete+insert can never renumber a surviving item.
  */
 
+/**
+ * Map a persisted entry ROW back to the SubscriptionEntry contract shape (a null column drops to an
+ * absent field). Defined once and shared by the discovery orchestrator, the out-of-process report
+ * leg, and library recompose so the row→entry projection never drifts between them.
+ */
+export function rowToEntry(row: SubscriptionEntryRow): SubscriptionEntry {
+  const entry: SubscriptionEntry = {
+    entryKey: row.entryKey,
+    displayName: row.displayName,
+    downloadRef: row.downloadRef,
+    preset: row.preset,
+  };
+  if (row.chip !== null) entry.chip = row.chip;
+  if (row.overrides !== null) entry.overrides = row.overrides;
+  if (row.ytdlOptions !== null) entry.ytdlOptions = row.ytdlOptions;
+  if (row.assets !== null) entry.assets = row.assets;
+  return entry;
+}
+
 export async function loadPublishedNumbering(
   sourceId: string,
   exec?: DbClient,

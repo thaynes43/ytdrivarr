@@ -3,17 +3,12 @@ import { getProvider } from './registry';
 import { dispatchDiscovery } from './dispatcher';
 import { buildPelotonDiscoveryPayloads, enqueueDiscoveryJob } from './jobs';
 import { createStateStore } from './state-store';
-import { dedupEntries, dedupTitleCollisions, preservePublishedNumbering } from './dedup';
-import { applyEmitWindow, DEFAULT_EMIT_WINDOW_DAYS, type EntryWindowMeta } from './emit-window';
-import { emitLibrary } from './emitter';
+import { preservePublishedNumbering } from './dedup';
+import { DEFAULT_EMIT_WINDOW_DAYS } from './emit-window';
 import { projectLibrary, resolveProjectionDir } from './projection';
+import { recomposeLibrary, type RecomposeSource } from './recompose';
 import { buildRunSummary, runSummaryToJson } from '../domain/run-summary';
-import {
-  subscriptionEntrySchema,
-  type ProviderContext,
-  type SourceView,
-  type SubscriptionEntry,
-} from '../contracts';
+import { subscriptionEntrySchema, type ProviderContext, type SourceView } from '../contracts';
 import {
   finishRun,
   startRun,
@@ -28,7 +23,7 @@ import {
   loadPublishedNumbering,
   replaceEntriesForSource,
 } from '../domain/entries';
-import type { Library, Source, SubscriptionEntryRow } from '../db/schema';
+import type { Library, Source } from '../db/schema';
 import type { DbClient } from '../db';
 import { NotFoundError, ValidationError } from '../errors';
 
@@ -83,20 +78,6 @@ export function buildContext(
     state: createStateStore(stateNamespace, exec),
     logger: logger.child({ source: source.id }),
   };
-}
-
-function rowToEntry(row: SubscriptionEntryRow): SubscriptionEntry {
-  const entry: SubscriptionEntry = {
-    entryKey: row.entryKey,
-    displayName: row.displayName,
-    downloadRef: row.downloadRef,
-    preset: row.preset,
-  };
-  if (row.chip !== null) entry.chip = row.chip;
-  if (row.overrides !== null) entry.overrides = row.overrides;
-  if (row.ytdlOptions !== null) entry.ytdlOptions = row.ytdlOptions;
-  if (row.assets !== null) entry.assets = row.assets;
-  return entry;
 }
 
 async function resolveLibraries(input: RunDiscoveryInput, exec?: DbClient): Promise<Library[]> {
@@ -198,39 +179,29 @@ export async function runDiscovery(input: RunDiscoveryInput): Promise<DiscoveryO
       }
 
       // 2) Recompose the WHOLE library from all persisted entries (a per-source run must not wipe
-      //    its siblings), dedup cross-source, apply the donor-parity emit window (entry-grain
-      //    providers only), and atomically project. The window map carries each row's first-seen
-      //    (createdAt) + whether its provider opts in — built here where the source's provider is known.
-      const libraryEntries: SubscriptionEntry[] = [];
-      const windowMeta = new Map<string, EntryWindowMeta>();
+      //    its siblings) and atomically project. The DB reads live here; recomposeLibrary is the pure
+      //    dedup + emit-window + render core (shared with the report leg). Only enabled sources
+      //    contribute to the projection, so a disabled source's rows are never read.
+      const recomposeSources: RecomposeSource[] = [];
       for (const source of sources) {
-        if (!source.enabled) continue;
-        const windowed = getProvider(source.providerId).emitWindow === true;
-        const rows = await listEntriesForSource(source.id, input.db);
-        for (const row of rows) {
-          libraryEntries.push(rowToEntry(row));
-          if (!windowMeta.has(row.entryKey)) {
-            windowMeta.set(row.entryKey, { firstSeenAt: row.createdAt, windowed });
-          }
-        }
+        const rows = source.enabled ? await listEntriesForSource(source.id, input.db) : [];
+        recomposeSources.push({ providerId: source.providerId, enabled: source.enabled, rows });
       }
-      const deduped = dedupTitleCollisions(dedupEntries(libraryEntries));
-      counts.deduped += libraryEntries.length - deduped.length;
-      const windowed = applyEmitWindow(deduped, windowMeta, emitWindowDays);
-      counts.windowedOut += windowed.dropped;
-
-      const emitted = emitLibrary(
+      const recomposed = recomposeLibrary(
         {
           presetName: library.presetName,
           workingDirectory: library.workingDirectory,
           emitPolicy: library.emitPolicy,
           libraryKind: library.libraryKind,
         },
-        windowed.emitted,
+        recomposeSources,
+        emitWindowDays,
       );
+      counts.deduped += recomposed.dedupedCount;
+      counts.windowedOut += recomposed.windowedOutCount;
       const dir = resolveProjectionDir(library.projectionPath, input.projectionRoot);
-      await projectLibrary(dir, emitted);
-      counts.emitted += windowed.emitted.length;
+      await projectLibrary(dir, recomposed.emitted);
+      counts.emitted += recomposed.emittedEntries.length;
       projected.push({ libraryId: library.id, dir });
     }
 
