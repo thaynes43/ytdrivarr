@@ -1,5 +1,5 @@
 import { eq } from 'drizzle-orm';
-import { jobs, type SubscriptionEntryRow } from '../db/schema';
+import { jobs } from '../db/schema';
 import { resolveDb } from '../db/client';
 import type { Database, DbClient } from '../db';
 import {
@@ -12,15 +12,10 @@ import { ConflictError, NotFoundError, ValidationError } from '../errors';
 import { getProvider } from './registry';
 import { createStateStore } from './state-store';
 import { deliverSession } from './credentials';
-import {
-  dedupEntries,
-  dedupTitleCollisions,
-  dropTitleCollisions,
-  preservePublishedNumbering,
-} from './dedup';
-import { applyEmitWindow, DEFAULT_EMIT_WINDOW_DAYS, type EntryWindowMeta } from './emit-window';
-import { emitLibrary } from './emitter';
+import { dropTitleCollisions, preservePublishedNumbering } from './dedup';
+import { DEFAULT_EMIT_WINDOW_DAYS } from './emit-window';
 import { projectLibrary, resolveProjectionDir } from './projection';
+import { recomposeLibrary, type RecomposeSource } from './recompose';
 import { getLibrary } from '../domain/libraries';
 import { listSourcesForLibrary } from '../domain/sources';
 import {
@@ -28,6 +23,7 @@ import {
   listEntriesForSource,
   loadPublishedNumbering,
   mergeEntriesForSource,
+  rowToEntry,
 } from '../domain/entries';
 import { finishRun } from '../domain/runs';
 import { buildRunSummary, renderRunSummaryMarkdown, runSummaryToJson } from '../domain/run-summary';
@@ -79,20 +75,6 @@ export interface ReportJobOutcome {
   merged: { added: number; updated: number };
   projected?: { libraryId: string; dir: string };
   credential?: { bearer: boolean; cookies: boolean };
-}
-
-function rowToEntry(row: SubscriptionEntryRow): SubscriptionEntry {
-  const entry: SubscriptionEntry = {
-    entryKey: row.entryKey,
-    displayName: row.displayName,
-    downloadRef: row.downloadRef,
-    preset: row.preset,
-  };
-  if (row.chip !== null) entry.chip = row.chip;
-  if (row.overrides !== null) entry.overrides = row.overrides;
-  if (row.ytdlOptions !== null) entry.ytdlOptions = row.ytdlOptions;
-  if (row.assets !== null) entry.assets = row.assets;
-  return entry;
 }
 
 export async function reportJob(input: ReportJobInput): Promise<ReportJobOutcome> {
@@ -191,9 +173,8 @@ export async function reportJob(input: ReportJobInput): Promise<ReportJobOutcome
   //    LEDGER, not the windowed file), and the window map carries each row's first-seen
   //    (createdAt) + whether its provider opts in.
   const emitWindowDays = input.emitWindowDays ?? DEFAULT_EMIT_WINDOW_DAYS;
-  const libraryEntries: SubscriptionEntry[] = [];
-  const windowMeta = new Map<string, EntryWindowMeta>();
   const postCounts = new Map<string, number>();
+  const recomposeSources: RecomposeSource[] = [];
   merged.total = 0;
   for (const source of sources) {
     const rows = await listEntriesForSource(source.id, d);
@@ -201,28 +182,20 @@ export async function reportJob(input: ReportJobInput): Promise<ReportJobOutcome
     if (source.providerId === job.providerId || source.id === sourceId) {
       merged.total += rows.length;
     }
-    if (!source.enabled) continue;
-    const providerWindowed = getProvider(source.providerId).emitWindow === true;
-    for (const row of rows) {
-      libraryEntries.push(rowToEntry(row));
-      if (!windowMeta.has(row.entryKey)) {
-        windowMeta.set(row.entryKey, { firstSeenAt: row.createdAt, windowed: providerWindowed });
-      }
-    }
+    recomposeSources.push({ providerId: source.providerId, enabled: source.enabled, rows });
   }
-  const deduped = dedupTitleCollisions(dedupEntries(libraryEntries));
-  const windowed = applyEmitWindow(deduped, windowMeta, emitWindowDays);
-  const emitted = emitLibrary(
+  const recomposed = recomposeLibrary(
     {
       presetName: library.presetName,
       workingDirectory: library.workingDirectory,
       emitPolicy: library.emitPolicy,
       libraryKind: library.libraryKind,
     },
-    windowed.emitted,
+    recomposeSources,
+    emitWindowDays,
   );
   const dir = resolveProjectionDir(library.projectionPath, input.projectionRoot);
-  await projectLibrary(dir, emitted);
+  await projectLibrary(dir, recomposed.emitted);
 
   // 5) finalize the Run with counts + telemetry + the owner summary, and mark the job done.
   //    The watch-grain split makes the per-activity Changes breakdown a CORE fact: each activity
@@ -283,10 +256,10 @@ export async function reportJob(input: ReportJobInput): Promise<ReportJobOutcome
     discovered: validated.length,
     added: merged.added,
     updated: merged.updated,
-    deduped: libraryEntries.length - deduped.length,
+    deduped: recomposed.dedupedCount,
     titleCollisions: titleCollisionsDropped,
-    windowedOut: windowed.dropped,
-    emitted: windowed.emitted.length,
+    windowedOut: recomposed.windowedOutCount,
+    emitted: recomposed.emittedEntries.length,
     entries: merged.total,
   };
   const provider = getProvider(job.providerId);
