@@ -1,6 +1,6 @@
 {
   "name": "ytdrivarr",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "An *arr-shaped ytdl-content suite service: owns Sources, renders per-Library ytdl-sub config, schedules discovery, and remediates per item — the way an *arr does for a download client.",
   "license": "AGPL-3.0-only",
   "repository": {
