@@ -180,9 +180,9 @@ class PelotonWorker:
                                  retryable=lr.retryable)
 
             if pelo.mode == "refresh":
-                self._do_refresh(job, pelo, driver, hb, start)
+                self._do_refresh(job, pelo, driver, hb, start, lr.attempts)
             else:
-                self._do_scrape(job, pelo, driver, hb, start)
+                self._do_scrape(job, pelo, driver, hb, start, lr.attempts)
         except JobReclaimed:
             self.logger.warning("Job %s aborted (reclaimed by CORE)", job.id)
         except WorkerError as exc:
@@ -200,7 +200,7 @@ class PelotonWorker:
             if session is not None:
                 session.close()
 
-    def _do_refresh(self, job, pelo, driver, hb, start) -> None:
+    def _do_refresh(self, job, pelo, driver, hb, start, login_attempts=0) -> None:
         minter = self.minter_factory(pelo)
         player_url = self._refresh_player_url(pelo, driver)
         minted = minter.mint(driver, player_url)  # raises BearerCaptureError on failure
@@ -211,7 +211,12 @@ class PelotonWorker:
             "telemetry": {
                 "mode": "refresh",
                 "durationMs": self._elapsed_ms(start),
-                "bearerAttempts": minter.retries + 1,
+                "authOk": True,
+                "loginOk": True,
+                "loginAttempts": login_attempts,
+                # ACTUAL capture attempts, not the configured max (`minter.retries + 1`
+                # was always the ceiling regardless of a clean first-try mint).
+                "bearerAttempts": minted.attempts,
                 "alarms": [],
             },
             "summary": {"mode": "refresh", "bearerMinted": True},
@@ -219,7 +224,7 @@ class PelotonWorker:
         self.client.report(job.id, result)
         self.logger.info("Job %s refresh reported (bearer minted)", job.id)
 
-    def _do_scrape(self, job, pelo, driver, hb, start) -> None:
+    def _do_scrape(self, job, pelo, driver, hb, start, login_attempts=0) -> None:
         scraper = self.scraper_factory(pelo)
         results = []
         # Donor parity: each activity gets its OWN numberer, seeded from its own
@@ -250,6 +255,8 @@ class PelotonWorker:
             telemetry = build_telemetry(
                 activity_results=results,
                 numbering_snapshot=numbering_snapshot,
+                login_attempts=login_attempts,
+                bearer_attempts=minted.attempts if minted else 0,
                 duration_ms=self._elapsed_ms(start),
                 alarms=alarms,
             )

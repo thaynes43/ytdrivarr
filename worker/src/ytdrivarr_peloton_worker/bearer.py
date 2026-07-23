@@ -81,6 +81,10 @@ class MintedSession:
     bearer: str
     cookies: list = field(default_factory=list)  # raw selenium cookie dicts
     minted_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    # Actual capture attempts taken (1 on a clean first-try mint; more when a capture
+    # was retried). Surfaced so `ytdrivarr_bearer_capture_retries_total` counts real
+    # mint work instead of being structurally zero (metrics-accuracy fix).
+    attempts: int = 1
 
     @property
     def expires_at(self) -> datetime | None:
@@ -133,7 +137,9 @@ class BearerMinter:
                 cookies = _safe_get_cookies(driver)
                 self.logger.info("Bearer captured (%d chars), %d cookies",
                                  len(token), len(cookies))
-                return MintedSession(bearer=token.strip(), cookies=cookies)
+                return MintedSession(
+                    bearer=token.strip(), cookies=cookies, attempts=attempt + 1
+                )
             except BearerCaptureError as exc:
                 last_exc = exc
                 if attempt < self.retries:

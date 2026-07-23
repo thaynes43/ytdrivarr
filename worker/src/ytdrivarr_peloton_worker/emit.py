@@ -85,12 +85,16 @@ def build_telemetry(
 ) -> dict:
     """Structured telemetry (replaces the donor's text-summaries-into-logs)."""
     per_activity = []
-    total_links = total_new = total_skipped = total_malformed = 0
+    total_links = total_new = total_skipped = total_malformed = total_scrolls = 0
+    drift_activities: list[str] = []
     for r in activity_results:
         total_links += r.links_found
         total_new += len(r.entries)
         total_skipped += r.skipped_existing
         total_malformed += r.malformed
+        total_scrolls += r.scrolls_performed
+        if r.selector_drift:
+            drift_activities.append(r.activity)
         per_activity.append(
             {
                 "activity": r.activity,
@@ -110,6 +114,17 @@ def build_telemetry(
         "entriesBuilt": total_new,
         "skippedExisting": total_skipped,
         "malformed": total_malformed,
+        # Run-level scrape-health aggregates the CORE reads into the run summary + the
+        # `ytdrivarr_last_run_scrolls` / `_selector_drift_hits` gauges. Previously absent,
+        # so both metrics read a structural 0 even when the scraper scrolled / drifted.
+        "scrollsPerformed": total_scrolls,
+        "selectorDriftHits": len(drift_activities),
+        "selectorDriftActivities": drift_activities,
+        # build_telemetry runs only after a successful login (worker._handle raises before
+        # here on any non-ok login), so auth/login are definitively ok on this leg — record
+        # it so the owner's daily-review Health section reads "ok / ok", not "n/a".
+        "authOk": True,
+        "loginOk": True,
         "loginAttempts": login_attempts,
         "bearerAttempts": bearer_attempts,
         # Per-activity high-water marks: {activitySlug: {durationString: max}} —

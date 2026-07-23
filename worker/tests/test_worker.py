@@ -182,6 +182,25 @@ def test_scrape_happy_reports_entries():
     assert client.failed == []
 
 
+def test_scrape_telemetry_carries_login_and_bearer_attempts():
+    # The metrics-accuracy fix: loginAttempts flows from the login result,
+    # bearerAttempts from the minted session, scrollsPerformed from the scrape
+    # results — the reported telemetry the CORE sums into
+    # ytdrivarr_login_attempts_total / _bearer_capture_retries_total / _last_run_scrolls.
+    result = ActivityScrapeResult(activity="cycling", entries=[_entry("c1")],
+                                  links_found=1, new_candidates=1, scrolls_performed=5)
+    client = FakeClient(jobs=[_scrape_job()])
+    login = FakeLogin(LoginResult(LoginOutcome.OK, attempts=2))
+    worker = make_worker(client, scraper=FakeScraper({"cycling": result}), login=login)
+    assert worker.run_once() is True
+    _, payload = client.reported[0]
+    tel = payload["telemetry"]
+    assert tel["loginAttempts"] == 2           # threaded from LoginResult.attempts
+    assert tel["bearerAttempts"] == 1          # MintedSession.attempts (clean first-try mint)
+    assert tel["scrollsPerformed"] == 5        # summed from the per-activity results
+    assert tel["authOk"] is True and tel["loginOk"] is True
+
+
 def test_login_bad_credentials_fails_not_retryable():
     client = FakeClient(jobs=[_scrape_job()])
     login = FakeLogin(LoginResult(LoginOutcome.BAD_CREDENTIALS, "wrong"))

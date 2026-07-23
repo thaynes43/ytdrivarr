@@ -73,6 +73,8 @@ def test_login_success(no_sleep):
     assert d.current_url == "https://members.onepeloton.com/home"
     # No fixed-sleep waiting AND no retries needed.
     assert no_sleep.calls == []
+    # Clean first-try login records exactly one attempt (the loginAttempts telemetry).
+    assert result.attempts == 1
 
 
 def test_login_bad_credentials_still_on_login(no_sleep):
@@ -113,6 +115,8 @@ def test_login_unexpected_redirect_retries(no_sleep):
     assert result.retryable is True
     # REDIRECT is retryable -> backed off once per retry (retries=2).
     assert len(no_sleep.calls) == 2
+    # 1 initial + 2 retries = 3 attempts recorded.
+    assert result.attempts == 3
 
 
 def test_login_timeout_retried_then_failed(no_sleep):
