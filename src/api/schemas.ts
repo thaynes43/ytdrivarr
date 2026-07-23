@@ -141,6 +141,35 @@ export const discoveryOutcomeDto = z.object({
   projected: z.array(z.object({ libraryId: z.string(), dir: z.string() })),
 });
 
+// Dry-run PREVIEW (dry-run PR3): the would-be diff + rendered files a discovery run WOULD produce,
+// computed in memory with zero side effects (no persist / no projection write / no Run record).
+export const previewSourceDiffDto = z.object({
+  sourceId: z.string(),
+  providerId: z.string(),
+  displayName: z.string(),
+  ref: z.string(),
+  /** false for an out_of_process (Peloton) source at dispatch — its new classes need a real scrape. */
+  previewable: z.boolean(),
+  added: z.number(),
+  removed: z.number(),
+  unchanged: z.number(),
+});
+export const previewLibraryDto = z.object({
+  libraryId: z.string(),
+  library: z.string(),
+  /** the would-be rendered files — NOT written anywhere. */
+  configYaml: z.string(),
+  subscriptionsYaml: z.string(),
+  emitted: z.number(),
+  deduped: z.number(),
+  windowedOut: z.number(),
+  sources: z.array(previewSourceDiffDto),
+});
+export const previewOutcomeDto = z.object({
+  libraries: z.array(previewLibraryDto),
+  warnings: z.array(z.string()),
+});
+
 export const errorDto = z.object({ error: z.string(), details: z.unknown().optional() });
 
 export const okDto = z.object({ ok: z.literal(true) });
@@ -230,6 +259,12 @@ export const createRunBody = z.object({
   scope: z.enum(['all', 'library', 'source']).default('all'),
   scopeRef: z.string().optional(),
   trigger: z.enum(['cron', 'api', 'edit']).optional(),
+});
+
+// A preview mirrors a run's scope but carries no `trigger` — it never creates a Run.
+export const previewRunBody = z.object({
+  scope: z.enum(['all', 'library', 'source']).default('all'),
+  scopeRef: z.string().optional(),
 });
 
 export const createRemediationBody = z.object({
