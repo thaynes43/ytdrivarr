@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.6.2](https://github.com/thaynes43/ytdrivarr/compare/v0.6.1...v0.6.2) (2026-07-23)
+
+
+### Bug Fixes
+
+* **worker:** report login/bearer/scroll telemetry so auth metrics stop reading zero ([#26](https://github.com/thaynes43/ytdrivarr/issues/26)) ([7f30cd5](https://github.com/thaynes43/ytdrivarr/commit/7f30cd5857b4b1bf9ad91ee7249779cc1d0c57ea))
+
+
+### Refactors
+
+* **core:** extract pure recomposeLibrary + shared rowToEntry (dry-run PR1) ([#31](https://github.com/thaynes43/ytdrivarr/issues/31)) ([20cf161](https://github.com/thaynes43/ytdrivarr/commit/20cf1611e7a140eba321eb0916814c1f39daa0d6))
+
 ## [0.6.1](https://github.com/thaynes43/ytdrivarr/compare/v0.6.0...v0.6.1) (2026-07-22)
 
 
