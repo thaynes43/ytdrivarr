@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/thaynes43/ytdrivarr/compare/v0.8.0...v0.9.0) (2026-07-23)
+
+
+### Features
+
+* **api:** config-override preview (dry-run PR4) ([#36](https://github.com/thaynes43/ytdrivarr/issues/36)) ([2f40e21](https://github.com/thaynes43/ytdrivarr/commit/2f40e21365f9a0d4c8db0b28c5e98e08a24180df))
+
 ## [0.8.0](https://github.com/thaynes43/ytdrivarr/compare/v0.7.0...v0.8.0) (2026-07-23)
 
 
