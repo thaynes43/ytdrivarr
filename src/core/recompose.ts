@@ -54,6 +54,21 @@ export function recomposeLibrary(
       }
     }
   }
+  return composeAndEmit(library, libraryEntries, windowMeta, emitWindowDays);
+}
+
+/**
+ * The PURE dedup → emit-window → render tail, over an ALREADY-ASSEMBLED library entry set + its
+ * per-entry window metadata. `recomposeLibrary` builds those from persisted rows; the dry-run
+ * preview builds them from a SIMULATED entry set (never touching the DB) and calls this directly —
+ * so the two share the exact dedup/window/emit semantics without preview having to fake DB rows.
+ */
+export function composeAndEmit(
+  library: EmitLibrary,
+  libraryEntries: SubscriptionEntry[],
+  windowMeta: ReadonlyMap<string, EntryWindowMeta>,
+  emitWindowDays: number,
+): RecomposedLibrary {
   const deduped = dedupTitleCollisions(dedupEntries(libraryEntries));
   const windowed = applyEmitWindow(deduped, windowMeta, emitWindowDays);
   const emitted = emitLibrary(library, windowed.emitted);
