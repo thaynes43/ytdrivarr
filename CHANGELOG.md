@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/thaynes43/ytdrivarr/compare/v0.6.2...v0.7.0) (2026-07-23)
+
+
+### Features
+
+* **core:** dry-run preview engine (previewDiscovery) — dry-run PR2 ([#32](https://github.com/thaynes43/ytdrivarr/issues/32)) ([aa432f5](https://github.com/thaynes43/ytdrivarr/commit/aa432f525205d3a529c8bfb05bf45e480a68f2ed))
+
 ## [0.6.2](https://github.com/thaynes43/ytdrivarr/compare/v0.6.1...v0.6.2) (2026-07-23)
 
 
