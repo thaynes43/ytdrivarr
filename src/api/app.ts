@@ -562,6 +562,7 @@ function buildRoutes(opts: CreateAppOptions): RouteDef[] {
         const outcome = await previewDiscovery({
           scope: body.scope,
           ...(body.scopeRef !== undefined ? { scopeRef: body.scopeRef } : {}),
+          ...(body.overrides !== undefined ? { overrides: body.overrides } : {}),
           ...(opts.emitWindowDays !== undefined ? { emitWindowDays: opts.emitWindowDays } : {}),
         });
         return json(c, previewOutcomeDto, outcome, 200);

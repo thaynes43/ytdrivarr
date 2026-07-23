@@ -80,4 +80,30 @@ describe('previewDiscovery — compute-only dry-run (embedded PG)', () => {
     expect([pel.added, pel.removed, pel.unchanged]).toEqual([0, 0, 0]);
     expect(out.warnings.some((w) => w.includes('peloton'))).toBe(true);
   });
+
+  it('overrides.disableSourceIds previews unmonitoring — the source drops out of the emit', async () => {
+    const base = await previewDiscovery({ scope: 'library', scopeRef: lib.id, db: t.db });
+    expect(base.libraries[0]!.emitted).toBe(1); // the YouTube source contributes its 1 entry
+
+    const out = await previewDiscovery({
+      scope: 'library',
+      scopeRef: lib.id,
+      db: t.db,
+      overrides: { disableSourceIds: [ytSource.id] },
+    });
+    expect(out.libraries[0]!.emitted).toBe(0); // excluded exactly as unmonitoring would
+    const yt = out.libraries[0]!.sources.find((s) => s.sourceId === ytSource.id)!;
+    expect(yt.added).toBe(0); // disabled → no discovery simulated
+  });
+
+  it('overrides.library.presetName re-keys the rendered subscriptions.yaml', async () => {
+    const out = await previewDiscovery({
+      scope: 'library',
+      scopeRef: lib.id,
+      db: t.db,
+      overrides: { library: { presetName: 'My Custom Preset' } },
+    });
+    const doc = parse(out.libraries[0]!.subscriptionsYaml) as Record<string, unknown>;
+    expect(Object.keys(doc)).toContain('My Custom Preset');
+  });
 });
