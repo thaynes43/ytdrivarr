@@ -258,3 +258,88 @@ describe('console-facing API additions', () => {
     expect(health.headers.get('cache-control')).toBe('no-store');
   });
 });
+
+describe('dry-run preview — POST /api/v1/runs/preview (compute-only, no side effects)', () => {
+  it('returns the would-be diff + rendered YAML and persists NOTHING', async () => {
+    const libRes = await post('/api/v1/libraries', {
+      name: 'Preview',
+      mediaRoot: '/media/preview',
+      libraryKind: 'video',
+      presetName: 'Plex TV Show by Date',
+      projectionPath: 'preview-e2e',
+    });
+    const lib = (await libRes.json()) as { id: string };
+    const s = await post('/api/v1/sources', {
+      libraryId: lib.id,
+      providerId: 'in-core-url-list',
+      kind: 'url-list',
+      mediaKind: 'video',
+      displayName: 'Preview Channel',
+      ref: 'https://www.youtube.com/@PreviewChan',
+      settings: { chip: 'Docs' },
+    });
+    expect(s.status).toBe(201);
+    const source = (await s.json()) as { id: string };
+
+    const runCount = async () =>
+      (
+        (await (
+          await app.request('/api/v1/runs?limit=100', { headers: { 'x-api-key': KEY } })
+        ).json()) as unknown[]
+      ).length;
+    const runsBefore = await runCount();
+
+    const res = await post('/api/v1/runs/preview', { scope: 'library', scopeRef: lib.id });
+    expect(res.status).toBe(200);
+    const out = (await res.json()) as {
+      libraries: {
+        subscriptionsYaml: string;
+        emitted: number;
+        sources: { sourceId: string; previewable: boolean; added: number }[];
+      }[];
+      warnings: string[];
+    };
+    const previewed = out.libraries[0]!;
+    const diff = previewed.sources.find((x) => x.sourceId === source.id)!;
+    expect(diff.previewable).toBe(true);
+    expect(diff.added).toBe(1); // the in_core URL→entry shows as an add (nothing persisted yet)
+    expect(previewed.emitted).toBe(1);
+    expect(previewed.subscriptionsYaml).toContain('Preview Channel');
+
+    // NO SIDE EFFECT: no entries persisted, and no Run was created.
+    const entriesRes = await app.request(`/api/v1/sources/${source.id}/entries`, {
+      headers: { 'x-api-key': KEY },
+    });
+    expect((await entriesRes.json()) as unknown[]).toHaveLength(0);
+    expect(await runCount()).toBe(runsBefore); // preview creates no Run
+  });
+
+  it('flags an out_of_process (Peloton) source as not previewable, with a warning', async () => {
+    const libRes = await post('/api/v1/libraries', {
+      name: 'Preview-Pel',
+      mediaRoot: '/media/pel',
+      libraryKind: 'video',
+      presetName: 'Plex TV Show by Date',
+      projectionPath: 'preview-pel',
+    });
+    const lib = (await libRes.json()) as { id: string };
+    await post('/api/v1/sources', {
+      libraryId: lib.id,
+      providerId: 'peloton',
+      kind: 'peloton-scraper',
+      mediaKind: 'video',
+      displayName: 'Cycling',
+      ref: 'cycling',
+      settings: {},
+    });
+    const res = await post('/api/v1/runs/preview', { scope: 'library', scopeRef: lib.id });
+    expect(res.status).toBe(200);
+    const out = (await res.json()) as {
+      libraries: { sources: { providerId: string; previewable: boolean }[] }[];
+      warnings: string[];
+    };
+    const pel = out.libraries[0]!.sources.find((x) => x.providerId === 'peloton')!;
+    expect(pel.previewable).toBe(false);
+    expect(out.warnings.some((w) => w.includes('peloton'))).toBe(true);
+  });
+});

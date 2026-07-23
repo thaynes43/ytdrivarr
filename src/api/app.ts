@@ -29,6 +29,8 @@ import {
   importYtdlSubBody,
   libraryDto,
   okDto,
+  previewOutcomeDto,
+  previewRunBody,
   providerDto,
   remediationJobDto,
   reportJobBody,
@@ -52,6 +54,7 @@ import { validateYoutubeRef } from '../providers/youtube/ref';
 import { collectHealth } from '../core/health';
 import { metricsExposition } from '../core/metrics';
 import { runDiscovery } from '../core/discovery';
+import { previewDiscovery } from '../core/preview';
 import {
   createLibrary,
   deleteLibrary,
@@ -544,6 +547,24 @@ function buildRoutes(opts: CreateAppOptions): RouteDef[] {
           ...(opts.emitWindowDays !== undefined ? { emitWindowDays: opts.emitWindowDays } : {}),
         });
         return json(c, discoveryOutcomeDto, outcome, 201);
+      },
+    },
+    {
+      method: 'post',
+      path: '/api/v1/runs/preview',
+      summary: 'Dry-run: preview a run’s would-be config + entry diff, with NO side effects',
+      tags: ['runs'],
+      auth: true,
+      request: { body: previewRunBody },
+      response: previewOutcomeDto,
+      handler: async (c) => {
+        const body = await parseBody(c, previewRunBody);
+        const outcome = await previewDiscovery({
+          scope: body.scope,
+          ...(body.scopeRef !== undefined ? { scopeRef: body.scopeRef } : {}),
+          ...(opts.emitWindowDays !== undefined ? { emitWindowDays: opts.emitWindowDays } : {}),
+        });
+        return json(c, previewOutcomeDto, outcome, 200);
       },
     },
     {
