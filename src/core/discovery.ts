@@ -80,7 +80,10 @@ export function buildContext(
   };
 }
 
-async function resolveLibraries(input: RunDiscoveryInput, exec?: DbClient): Promise<Library[]> {
+export async function resolveLibraries(
+  input: { scope: RunScope; scopeRef?: string },
+  exec?: DbClient,
+): Promise<Library[]> {
   if (input.scope === 'all') return listLibraries(exec);
   if (input.scope === 'library') {
     if (!input.scopeRef) throw new ValidationError('scope=library requires scopeRef');
