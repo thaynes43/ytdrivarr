@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/thaynes43/ytdrivarr/compare/v0.7.0...v0.8.0) (2026-07-23)
+
+
+### Features
+
+* **api:** POST /api/v1/runs/preview — dry-run preview endpoint (dry-run PR3) ([#34](https://github.com/thaynes43/ytdrivarr/issues/34)) ([e2535d5](https://github.com/thaynes43/ytdrivarr/commit/e2535d52445bde4c300b8b6879facbd2c6a821d6))
+
 ## [0.7.0](https://github.com/thaynes43/ytdrivarr/compare/v0.6.2...v0.7.0) (2026-07-23)
 
 
