@@ -62,6 +62,34 @@ def test_build_telemetry_episode_high_water_is_per_activity():
     }
 
 
+def test_build_telemetry_carries_run_level_scrape_health():
+    # The CORE reads these run-level aggregates into the run summary + the
+    # ytdrivarr_last_run_scrolls / _selector_drift_hits gauges. A cycling activity
+    # that scrolled 4×, plus a cardio activity that found links but parsed none
+    # (selector drift), must surface as scrollsPerformed=6 and one drift hit.
+    results = [
+        ActivityScrapeResult(activity="cycling", entries=[build_entry(_sc("cy1"), "/m")],
+                             links_found=1, new_candidates=1, scrolls_performed=4),
+        ActivityScrapeResult(activity="cardio", entries=[], links_found=3,
+                             new_candidates=3, scrolls_performed=2),  # drift: links, 0 parsed
+    ]
+    assert results[1].selector_drift is True
+    telemetry = build_telemetry(
+        activity_results=results,
+        numbering_snapshot={},
+        login_attempts=2,
+        bearer_attempts=1,
+        alarms=[],
+    )
+    assert telemetry["scrollsPerformed"] == 6
+    assert telemetry["selectorDriftHits"] == 1
+    assert telemetry["selectorDriftActivities"] == ["cardio"]
+    assert telemetry["loginAttempts"] == 2
+    assert telemetry["bearerAttempts"] == 1
+    # build_telemetry only runs post-successful-login -> auth/login recorded ok.
+    assert telemetry["authOk"] is True and telemetry["loginOk"] is True
+
+
 def test_render_yaml_live_shape_and_grouping():
     entries = [
         build_entry(_sc("a", "30 min Ride", "Cody Rigsby", duration=30, episode=1), "/media/peloton"),

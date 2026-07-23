@@ -45,6 +45,7 @@ def test_bearer_captured_via_js_hook(no_sleep):
     minted = minter.mint(d, PLAYER_URL)
     assert minted.bearer == "Bearer js.tok.value"
     assert len(minted.cookies) == 1
+    assert minted.attempts == 1  # captured first try (the bearerAttempts telemetry)
     # CDP was primed with the interceptor + domains enabled.
     cdp = [c[0] for c in d.cdp_calls]
     assert "Network.enable" in cdp
@@ -96,6 +97,7 @@ def test_bearer_retry_then_succeed(no_sleep):
     minted = minter.mint(d, PLAYER_URL)
     assert minted.bearer == "Bearer late.tok"
     assert len(no_sleep.calls) == 1  # one backoff before the 2nd attempt succeeded
+    assert minted.attempts == 2  # succeeded on the 2nd attempt
 
 
 def test_render_netscape_cookies_format():

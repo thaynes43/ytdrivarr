@@ -86,6 +86,10 @@ class LoginResult:
     outcome: LoginOutcome
     detail: str = ""
     current_url: str = ""
+    # Actual login attempts made (1 on a clean first-try login; more when a transient
+    # timeout/redirect was retried). Surfaced so `ytdrivarr_login_attempts_total` counts
+    # real work instead of being structurally zero (metrics-accuracy fix).
+    attempts: int = 0
 
     @property
     def ok(self) -> bool:
@@ -141,6 +145,7 @@ class PelotonLogin:
         for attempt in range(self.retries + 1):
             self.logger.info("Login attempt %d/%d", attempt + 1, self.retries + 1)
             result = self._attempt(driver, username, password)
+            result.attempts = attempt + 1
             if result.outcome in TERMINAL_OUTCOMES:
                 return result
             if attempt < self.retries:
