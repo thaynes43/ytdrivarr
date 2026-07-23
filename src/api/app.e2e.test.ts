@@ -342,4 +342,47 @@ describe('dry-run preview — POST /api/v1/runs/preview (compute-only, no side e
     expect(pel.previewable).toBe(false);
     expect(out.warnings.some((w) => w.includes('peloton'))).toBe(true);
   });
+
+  it('applies config overrides in memory (disableSourceIds) with no side effects', async () => {
+    const libRes = await post('/api/v1/libraries', {
+      name: 'Preview-Override',
+      mediaRoot: '/media/ovr',
+      libraryKind: 'video',
+      presetName: 'Plex TV Show by Date',
+      projectionPath: 'preview-override',
+    });
+    const lib = (await libRes.json()) as { id: string };
+    const sRes = await post('/api/v1/sources', {
+      libraryId: lib.id,
+      providerId: 'in-core-url-list',
+      kind: 'url-list',
+      mediaKind: 'video',
+      displayName: 'Ovr Channel',
+      ref: 'https://www.youtube.com/@OvrChan',
+      settings: { chip: 'Docs' },
+    });
+    const source = (await sRes.json()) as { id: string };
+
+    const base = (await (
+      await post('/api/v1/runs/preview', { scope: 'library', scopeRef: lib.id })
+    ).json()) as { libraries: { emitted: number }[] };
+    expect(base.libraries[0]!.emitted).toBe(1);
+
+    // preview UNMONITORING the source — it drops out of the emit, without persisting the change.
+    const res = await post('/api/v1/runs/preview', {
+      scope: 'library',
+      scopeRef: lib.id,
+      overrides: { disableSourceIds: [source.id] },
+    });
+    expect(res.status).toBe(200);
+    const out = (await res.json()) as { libraries: { emitted: number }[] };
+    expect(out.libraries[0]!.emitted).toBe(0);
+
+    // the real source is still enabled (override was in-memory only).
+    const listRes = await app.request('/api/v1/sources', { headers: { 'x-api-key': KEY } });
+    const row = ((await listRes.json()) as { id: string; enabled: boolean }[]).find(
+      (r) => r.id === source.id,
+    );
+    expect(row?.enabled).toBe(true);
+  });
 });

@@ -261,10 +261,24 @@ export const createRunBody = z.object({
   trigger: z.enum(['cron', 'api', 'edit']).optional(),
 });
 
-// A preview mirrors a run's scope but carries no `trigger` — it never creates a Run.
+// A preview mirrors a run's scope but carries no `trigger` — it never creates a Run. `overrides`
+// (PR4) shadow unsaved config changes in memory for the compute (emitter-observable changes only).
 export const previewRunBody = z.object({
   scope: z.enum(['all', 'library', 'source']).default('all'),
   scopeRef: z.string().optional(),
+  overrides: z
+    .object({
+      emitWindowDays: z.number().int().min(0).optional(),
+      library: z
+        .object({
+          emitPolicy: jsonObject.optional(),
+          presetName: z.string().optional(),
+          workingDirectory: z.string().optional(),
+        })
+        .optional(),
+      disableSourceIds: z.array(z.string()).optional(),
+    })
+    .optional(),
 });
 
 export const createRemediationBody = z.object({

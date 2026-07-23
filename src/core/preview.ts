@@ -26,11 +26,33 @@ import type { DbClient } from '../db';
  * dispatch-time run projects, before the worker reports) and flags it `previewable: false`.
  */
 
+/**
+ * Unsaved config changes to shadow IN MEMORY before recompose — the "test various config CHANGES
+ * before they go live" surface (dry-run PR4). Every override here is EMITTER-OBSERVABLE (it actually
+ * changes what `composeAndEmit` renders), so the preview shows the exact effect without persisting a
+ * thing. Peloton content overrides (per-activity cap, a new scraped source) are intentionally NOT
+ * here — they only bite at worker scrape time, so a preview cannot honestly show them.
+ */
+export interface PreviewOverrides {
+  /** shadow the emit window (days); 0 = unbounded. */
+  emitWindowDays?: number;
+  /** shadow the in-scope Library's emit-observable fields. */
+  library?: {
+    emitPolicy?: Record<string, unknown>;
+    presetName?: string;
+    workingDirectory?: string;
+  };
+  /** preview UNMONITORING these sources — excluded from the emit exactly as disabling them would. */
+  disableSourceIds?: string[];
+}
+
 export interface PreviewDiscoveryInput {
   scope: RunScope;
   scopeRef?: string;
   /** donor-parity emit window (days); defaults to DEFAULT_EMIT_WINDOW_DAYS. */
   emitWindowDays?: number;
+  /** unsaved config changes to preview (PR4). */
+  overrides?: PreviewOverrides;
   db?: DbClient;
   /** evaluation clock — the first-seen stamp for a genuinely-new (unwindowed) entry. Tests inject. */
   now?: Date;
@@ -70,7 +92,11 @@ export interface PreviewDiscoveryOutcome {
 export async function previewDiscovery(
   input: PreviewDiscoveryInput,
 ): Promise<PreviewDiscoveryOutcome> {
-  const emitWindowDays = input.emitWindowDays ?? DEFAULT_EMIT_WINDOW_DAYS;
+  // overrides shadow the real config purely for this compute — nothing is persisted.
+  const emitWindowDays =
+    input.overrides?.emitWindowDays ?? input.emitWindowDays ?? DEFAULT_EMIT_WINDOW_DAYS;
+  const disabledByOverride = new Set(input.overrides?.disableSourceIds ?? []);
+  const libOverride = input.overrides?.library;
   const libs = await resolveLibraries({ scope: input.scope, scopeRef: input.scopeRef }, input.db);
   const warnings: string[] = [];
   const libraries: PreviewLibrary[] = [];
@@ -87,11 +113,13 @@ export async function previewDiscovery(
       const firstSeenByKey = new Map(currentRows.map((r) => [r.entryKey, r.createdAt]));
       const inScope = input.scope !== 'source' || source.id === input.scopeRef;
       const provider = getProvider(source.providerId);
+      // an override-disabled source previews as unmonitored (excluded from the emit).
+      const enabled = source.enabled && !disabledByOverride.has(source.id);
 
       // The simulated post-run entry set for this source (SubscriptionEntry[]).
       let simulated: SubscriptionEntry[];
       let previewable = true;
-      if (inScope && source.enabled && provider.runtime === 'in_core') {
+      if (inScope && enabled && provider.runtime === 'in_core') {
         // exactly what runDiscovery would persist: pure discover → validate → preserve numbering.
         const ctx = buildContext(source, provider.stateNamespace, input.db);
         const discovered = await provider.discover(ctx);
@@ -101,7 +129,7 @@ export async function previewDiscovery(
       } else {
         // out_of_process at dispatch, out-of-scope, or disabled → the ledger is unchanged.
         simulated = currentRows.map(rowToEntry);
-        if (inScope && source.enabled && provider.runtime !== 'in_core') {
+        if (inScope && enabled && provider.runtime !== 'in_core') {
           previewable = false;
           warnings.push(
             `${source.providerId}:${source.ref} is out_of_process — preview shows the current ledger; ` +
@@ -132,7 +160,7 @@ export async function previewDiscovery(
       });
 
       // contribute to the library recompose — enabled sources only (mirrors recomposeLibrary).
-      if (!source.enabled) continue;
+      if (!enabled) continue;
       const windowed = provider.emitWindow === true;
       for (const entry of simulated) {
         libraryEntries.push(entry);
@@ -149,9 +177,9 @@ export async function previewDiscovery(
 
     const composed = composeAndEmit(
       {
-        presetName: library.presetName,
-        workingDirectory: library.workingDirectory,
-        emitPolicy: library.emitPolicy,
+        presetName: libOverride?.presetName ?? library.presetName,
+        workingDirectory: libOverride?.workingDirectory ?? library.workingDirectory,
+        emitPolicy: libOverride?.emitPolicy ?? library.emitPolicy,
         libraryKind: library.libraryKind,
       },
       libraryEntries,
