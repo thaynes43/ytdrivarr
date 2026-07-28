@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.1](https://github.com/thaynes43/ytdrivarr/compare/v0.9.0...v0.9.1) (2026-07-28)
+
+
+### Bug Fixes
+
+* **scheduler:** scope each provider's cron tick to its own sources ([#38](https://github.com/thaynes43/ytdrivarr/issues/38)) ([029d75d](https://github.com/thaynes43/ytdrivarr/commit/029d75d13fc4600ab97086e3fe8a117c74b36633))
+
 ## [0.9.0](https://github.com/thaynes43/ytdrivarr/compare/v0.8.0...v0.9.0) (2026-07-23)
 
 
