@@ -85,7 +85,7 @@ export interface RunSummaryDto {
 
 export interface RunDto {
   id: string;
-  scope: 'all' | 'library' | 'source';
+  scope: 'all' | 'library' | 'source' | 'provider';
   scopeRef: string | null;
   trigger: 'cron' | 'api' | 'edit';
   providerId: string | null;

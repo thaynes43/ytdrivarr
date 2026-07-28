@@ -5,7 +5,7 @@ import type { Database, DbClient } from '../db';
 
 /** Run recording (DESIGN-045 D-02/D-10) — the machine-level discovery/emit history + telemetry. */
 
-export type RunScope = 'all' | 'library' | 'source';
+export type RunScope = 'all' | 'library' | 'source' | 'provider';
 export type RunTrigger = 'cron' | 'api' | 'edit';
 export type RunStatus = 'running' | 'ok' | 'warn' | 'error';
 

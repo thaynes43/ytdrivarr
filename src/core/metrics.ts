@@ -25,8 +25,9 @@ import { effectivePelotonCap, pelotonSettingsSchema } from '../providers/peloton
  *
  * Labels (issue #19):
  *   - `provider` — every run/health series. Peloton runs are provider-attributed by the worker
- *     report/fail leg; scope-level in_core discovery/emit runs (YouTube is event-driven, finalized
- *     inline and left unattributed by design) bucket under the synthetic provider `core`.
+ *     report/fail leg, and each provider's own scheduled tick (scope='provider') is attributed to
+ *     that provider (the YouTube safety re-emit lands under `youtube`). Genuinely unscoped in_core
+ *     runs (a manual scope='all' run, an edit-triggered re-emit) bucket under the synthetic `core`.
  *   - `activity` — per-activity Peloton series (the watch-grain: one Source per activity, `ref` is
  *     the slug). `media_kind` — YouTube/library series (video | music).
  *   - `library` — projection/ledger series.

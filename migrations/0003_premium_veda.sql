@@ -1,0 +1,1 @@
+ALTER TYPE "public"."run_scope" ADD VALUE 'provider';

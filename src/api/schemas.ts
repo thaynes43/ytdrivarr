@@ -53,7 +53,7 @@ export type SourceDto = z.infer<typeof sourceDto>;
 
 export const runDto = z.object({
   id: z.string(),
-  scope: z.enum(['all', 'library', 'source']),
+  scope: z.enum(['all', 'library', 'source', 'provider']),
   scopeRef: z.string().nullable(),
   trigger: z.enum(['cron', 'api', 'edit']),
   providerId: z.string().nullable(),

@@ -38,6 +38,11 @@ import { NotFoundError, ValidationError } from '../errors';
 export interface RunDiscoveryInput {
   scope: RunScope;
   scopeRef?: string;
+  /** scope='provider' — the provider whose sources this run is confined to (the per-provider
+   * scheduled cron tick). Carried on the Run as `providerId` (honest provenance), NOT `scopeRef`
+   * (which is a uuid column; a provider id is a slug). A YouTube tick discovers only YouTube
+   * sources and enqueues NO Peloton scrape job; scope='all' still covers every provider. */
+  providerId?: string;
   trigger?: RunTrigger;
   projectionRoot?: string;
   /** D-14 — the donor-parity emit window (days) for entry-grain providers; 0 = unbounded. Defaults
@@ -84,7 +89,9 @@ export async function resolveLibraries(
   input: { scope: RunScope; scopeRef?: string },
   exec?: DbClient,
 ): Promise<Library[]> {
-  if (input.scope === 'all') return listLibraries(exec);
+  // scope='all' and scope='provider' both walk every Library — a provider's sources can span
+  // Libraries, and the per-Library source filter (inDiscoveryScope) narrows to the provider.
+  if (input.scope === 'all' || input.scope === 'provider') return listLibraries(exec);
   if (input.scope === 'library') {
     if (!input.scopeRef) throw new ValidationError('scope=library requires scopeRef');
     const lib = await getLibrary(input.scopeRef, exec);
@@ -102,14 +109,25 @@ export async function resolveLibraries(
 
 function inDiscoveryScope(input: RunDiscoveryInput, source: Source): boolean {
   if (input.scope === 'source') return source.id === input.scopeRef;
+  // A provider-scoped tick sees ONLY its own provider's sources — this is what keeps a YouTube
+  // safety re-emit from ever aggregating Peloton sources into a scrape job (the daily-double-login
+  // bug), while scope='all' (manual/API) still returns true for every source.
+  if (input.scope === 'provider') return source.providerId === input.providerId;
   return true;
 }
 
 export async function runDiscovery(input: RunDiscoveryInput): Promise<DiscoveryOutcome> {
+  // Provider-scoped runs must name a real provider; the id is stamped onto the Run so its
+  // provenance is honest (metrics/console attribute it to that provider, never mislabel it).
+  if (input.scope === 'provider') {
+    if (!input.providerId) throw new ValidationError('scope=provider requires providerId');
+    getProvider(input.providerId); // throws on an unknown provider id
+  }
   const run = await startRun({
     scope: input.scope,
     ...(input.scopeRef !== undefined ? { scopeRef: input.scopeRef } : {}),
     trigger: input.trigger ?? 'api',
+    ...(input.providerId !== undefined ? { providerId: input.providerId } : {}),
     ...(input.db !== undefined ? { db: input.db } : {}),
   });
   const emitWindowDays = input.emitWindowDays ?? DEFAULT_EMIT_WINDOW_DAYS;
