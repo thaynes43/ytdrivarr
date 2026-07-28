@@ -22,6 +22,13 @@
       "when": 1784649034279,
       "tag": "0002_peloton_per_activity",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1785268404619,
+      "tag": "0003_premium_veda",
+      "breakpoints": true
     }
   ]
 }

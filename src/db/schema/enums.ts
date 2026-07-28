@@ -3,8 +3,9 @@ import { pgEnum } from 'drizzle-orm/pg-core';
 /** video | music — carried by both Source.mediaKind and Library.libraryKind (D-02/D-12). */
 export const mediaKindEnum = pgEnum('media_kind', ['video', 'music']);
 
-/** A Run's scope (D-02). */
-export const runScopeEnum = pgEnum('run_scope', ['all', 'library', 'source']);
+/** A Run's scope (D-02). `provider` scopes a run to a single provider's sources (the scheduled
+ * per-provider cron tick — the provider is carried in `runs.provider_id`, not `scope_ref`). */
+export const runScopeEnum = pgEnum('run_scope', ['all', 'library', 'source', 'provider']);
 /** What triggered a Run (D-02). */
 export const runTriggerEnum = pgEnum('run_trigger', ['cron', 'api', 'edit']);
 /** A Run's terminal/interim status (D-02/D-10). */

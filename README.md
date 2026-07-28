@@ -183,8 +183,10 @@ are `SUM(...)` over the append-only `runs` table (monotonic across scrapes, rest
 `increase()` over a window yields "what changed in it".
 
 **Label conventions.** `provider` is on every run/health series — Peloton runs are provider-attributed
-by the worker report/fail leg; scope-level in-core discovery/emit runs (YouTube is event-driven and
-finalized inline, unattributed by design) bucket under the synthetic provider **`core`**. `activity`
+by the worker report/fail leg, and each provider's own scheduled tick (`scope='provider'`) is
+attributed to that provider, so the YouTube daily safety re-emit lands under **`youtube`** and never
+drags a Peloton scrape. Genuinely unscoped in-core runs (a manual `scope='all'` run, an edit-triggered
+re-emit) stay unattributed and bucket under the synthetic provider **`core`**. `activity`
 labels the per-activity Peloton series (watch-grain: one Source per activity, `ref` is the slug);
 `media_kind` (video|music) and `library` label the source/ledger/projection series.
 

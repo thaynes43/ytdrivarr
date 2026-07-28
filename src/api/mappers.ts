@@ -66,13 +66,14 @@ export function toSourceDto(row: Source, enrichment?: SourceEnrichment): SourceD
 }
 
 /**
- * The most recent Run covering each source: scope `all`, its library, or the source itself —
- * `runs` MUST be sorted most-recent-first (the listRuns order). Pure, so the coverage rule is
- * unit-testable without a database.
+ * The most recent Run covering each source: scope `all`, its library, the source itself, or its
+ * `provider` (the per-provider scheduled tick covers only that provider's sources) — `runs` MUST be
+ * sorted most-recent-first (the listRuns order). Pure, so the coverage rule is unit-testable
+ * without a database.
  */
 export function lastRunBySource(
-  sources: readonly Pick<Source, 'id' | 'libraryId'>[],
-  runs: readonly Pick<Run, 'scope' | 'scopeRef' | 'status' | 'startedAt'>[],
+  sources: readonly Pick<Source, 'id' | 'libraryId' | 'providerId'>[],
+  runs: readonly Pick<Run, 'scope' | 'scopeRef' | 'providerId' | 'status' | 'startedAt'>[],
 ): Map<string, { at: string; status: 'running' | 'ok' | 'warn' | 'error' }> {
   const result = new Map<string, { at: string; status: 'running' | 'ok' | 'warn' | 'error' }>();
   for (const source of sources) {
@@ -80,7 +81,8 @@ export function lastRunBySource(
       (run) =>
         run.scope === 'all' ||
         (run.scope === 'library' && run.scopeRef === source.libraryId) ||
-        (run.scope === 'source' && run.scopeRef === source.id),
+        (run.scope === 'source' && run.scopeRef === source.id) ||
+        (run.scope === 'provider' && run.providerId === source.providerId),
     );
     if (hit) result.set(source.id, { at: hit.startedAt.toISOString(), status: hit.status });
   }

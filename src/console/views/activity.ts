@@ -37,6 +37,9 @@ export function runTitle(
     const name = run.scopeRef ? names.source(run.scopeRef) : undefined;
     return `Discovery · ${name ?? 'source'}`;
   }
+  if (run.scope === 'provider') {
+    return `Discovery · ${run.providerId ?? 'provider'}`;
+  }
   return 'Discovery · All libraries';
 }
 
@@ -68,7 +71,11 @@ function metaLine(run: RunDto): string {
     const first = (run.logExcerpt ?? '').split('\n').find((l) => l.trim() !== '');
     return first ? first.slice(0, 90) : 'run finalized error';
   }
-  if (run.trigger === 'cron') return run.scope === 'all' ? 'scheduled discovery' : 'nightly scrape';
+  if (run.trigger === 'cron') {
+    if (run.scope === 'all') return 'scheduled discovery';
+    if (run.scope === 'provider') return `scheduled ${run.providerId ?? 'provider'} discovery`;
+    return 'nightly scrape';
+  }
   if (run.trigger === 'edit') return 're-emit after Source edit';
   return 'operator run';
 }

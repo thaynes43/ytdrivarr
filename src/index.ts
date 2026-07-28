@@ -32,13 +32,16 @@ async function main(): Promise<void> {
   };
   const app = createApp(appOptions);
 
-  // Two clocks, split from the downloader crons (D-15). M1 providers are event-driven, so this
-  // registers little; the Peloton nightly cron + bearer SLA arrive with M3.
+  // Two clocks, split from the downloader crons (D-15). Each provider's scheduled tick is scoped to
+  // that provider (scope='provider'): YouTube's daily safety cron re-emits ONLY YouTube sources, and
+  // Peloton's nightly cron stays the SOLE Peloton scrape — so a YouTube tick never drags a Peloton
+  // login/scrape (the daily-double-login account-risk bug). Manual/API runs still use scope='all'.
   const scheduler = new Scheduler(logger);
   for (const provider of listProviders()) {
     scheduler.register(provider.id, provider.scheduling, async () => {
       await runDiscovery({
-        scope: 'all',
+        scope: 'provider',
+        providerId: provider.id,
         trigger: 'cron',
         ...(config.projectionRoot !== undefined ? { projectionRoot: config.projectionRoot } : {}),
         emitWindowDays: config.emitWindowDays,
