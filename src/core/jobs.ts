@@ -338,11 +338,17 @@ export async function heartbeatJob(input: HeartbeatInput): Promise<{ ok: true }>
 
 // --- fail -------------------------------------------------------------------------------------
 
+/**
+ * The worker alarm kinds (D-10) the `/fail` leg accepts. `session_rejected` (issue #40): the worker
+ * minted a session but Peloton's `/api/me` refused it, so the worker delivered NOTHING rather than
+ * a session the downloader would 401/403 on.
+ */
 export const alarmKindSchema = [
   'login',
   'bearer_capture',
   'selector_drift',
   'scroll_timeout',
+  'session_rejected',
 ] as const;
 export type AlarmKind = (typeof alarmKindSchema)[number];
 
@@ -371,7 +377,8 @@ export interface FailJobResult {
  * `queued` (reclaimable) and its alarm is recorded into the linked Run's telemetry while the Run
  * stays running/warn — another worker will pick it up. Otherwise the job is `error` and the linked
  * Run is FINALIZED as `error`, surfacing the alarm. A `bearer_capture` failure ALWAYS becomes an
- * alarm + retry (never a silent stale token — the donor regression this designs out).
+ * alarm + retry (never a silent stale token — the donor regression this designs out); so does a
+ * `session_rejected` one (a minted session `/api/me` refused is never delivered, issue #40).
  */
 export async function failJob(input: FailJobInput): Promise<FailJobResult> {
   const maxAttempts = input.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
@@ -396,6 +403,7 @@ export async function failJob(input: FailJobInput): Promise<FailJobResult> {
     // Fold the alarm into the summary's issue-source telemetry keys so the run-summary lights up.
     if (input.alarm.kind === 'bearer_capture') alarmTelemetry.bearerCaptureRetries = job.attempts;
     if (input.alarm.kind === 'login') alarmTelemetry.loginFailures = job.attempts;
+    if (input.alarm.kind === 'session_rejected') alarmTelemetry.sessionRejections = job.attempts;
     if (input.alarm.kind === 'selector_drift') {
       alarmTelemetry.selectorDriftHits = 1;
       if (input.alarm.message) alarmTelemetry.selectorDriftActivities = [input.alarm.message];

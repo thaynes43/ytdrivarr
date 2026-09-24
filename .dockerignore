@@ -7,3 +7,5 @@ coverage
 .env
 .env.*
 .dev-projection
+**/__pycache__
+**/*.pyc

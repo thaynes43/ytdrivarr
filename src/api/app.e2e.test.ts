@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { mkdtemp, rm, readFile } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
 import type { Hono } from 'hono';
 import { bootTestDb, type TestDb } from '../testing/db';
@@ -114,6 +115,8 @@ describe('M1 end-to-end: library → sources → run → projection', () => {
     expect(preset?.['= Documentaries']?.['Defunctland']).toBe(
       'https://www.youtube.com/@Defunctland',
     );
+    // A library no provider contributes downloader assets to gets NOTHING beside its YAML (#40).
+    await expect(stat(join(projectionRoot, 'youtube', '.ytdrivarr'))).rejects.toThrow();
 
     // 5) Entries were persisted (C3/C5) and are readable per source.
     const entriesRes = await app.request(`/api/v1/sources/${source1.id}/entries`, {
@@ -384,5 +387,100 @@ describe('dry-run preview — POST /api/v1/runs/preview (compute-only, no side e
       (r) => r.id === source.id,
     );
     expect(row?.enabled).toBe(true);
+  });
+});
+
+describe('worker transport over HTTP — a Peloton library (issue #40)', () => {
+  const pluginRel = [
+    '.ytdrivarr',
+    'ytdlp-plugins',
+    'yt_dlp_plugins',
+    'extractor',
+    'ytdrivarr_peloton.py',
+  ];
+
+  it('accepts `session: null`, re-projects the Peloton yt-dlp plugin, and takes a session_rejected fail', async () => {
+    const libRes = await post('/api/v1/libraries', {
+      name: 'Peloton',
+      mediaRoot: '/media/peloton',
+      libraryKind: 'video',
+      presetName: 'Plex TV Show by Date',
+      projectionPath: 'peloton',
+      emitPolicy: { overrides: { tv_show_directory: '/media/peloton' } },
+    });
+    expect(libRes.status).toBe(201);
+    const lib = (await libRes.json()) as { id: string };
+    const srcRes = await post('/api/v1/sources', {
+      libraryId: lib.id,
+      providerId: 'peloton',
+      kind: 'peloton-scraper',
+      mediaKind: 'video',
+      displayName: 'Cycling',
+      ref: 'cycling',
+      settings: {},
+    });
+    expect(srcRes.status).toBe(201);
+
+    // Two library runs → two queued scrape jobs (one to report, one to fail). Each run already
+    // projects the plugin beside the (empty) subscriptions.yaml.
+    const runIds: string[] = [];
+    for (let i = 0; i < 2; i += 1) {
+      const runRes = await post('/api/v1/runs', { scope: 'library', scopeRef: lib.id });
+      expect(runRes.status).toBe(201);
+      const run = (await runRes.json()) as { runId: string; status: string };
+      expect(run.status).toBe('running');
+      runIds.push(run.runId);
+    }
+    const plugin = join(projectionRoot, 'peloton', ...pluginRel);
+    const srcDir = dirname(fileURLToPath(import.meta.url));
+    const shipped = await readFile(
+      join(srcDir, '..', 'providers', 'peloton', 'ytdlp-plugins', ...pluginRel.slice(2)),
+    );
+    expect((await readFile(plugin)).equals(shipped)).toBe(true);
+
+    // The REPORT leg re-projects it too: remove it, report a scrape that minted no session.
+    await rm(join(projectionRoot, 'peloton', '.ytdrivarr'), { recursive: true, force: true });
+    const first = (await (
+      await post('/api/v1/jobs/claim', { worker: 'w-e2e', providerId: 'peloton' })
+    ).json()) as { job: { id: string } | null };
+    expect(first.job).not.toBeNull();
+    const report = await post(`/api/v1/jobs/${first.job!.id}/report`, {
+      worker: 'w-e2e',
+      result: { entries: [], session: null, telemetry: {}, summary: {} },
+    });
+    expect(report.status).toBe(200);
+    const reported = (await report.json()) as { credential?: unknown };
+    expect(reported.credential).toBeUndefined(); // null session = nothing delivered
+    expect((await readFile(plugin)).equals(shipped)).toBe(true);
+
+    // The worker refuses to deliver a session /api/me rejected → `session_rejected` is accepted.
+    const second = (await (
+      await post('/api/v1/jobs/claim', { worker: 'w-e2e', providerId: 'peloton' })
+    ).json()) as { job: { id: string } | null };
+    expect(second.job).not.toBeNull();
+    const fail = await post(`/api/v1/jobs/${second.job!.id}/fail`, {
+      worker: 'w-e2e',
+      error: 'Peloton /api/me rejected the minted session: HTTP 401 (error_code 3010)',
+      retryable: true,
+      alarm: { kind: 'session_rejected', message: 'HTTP 401 (error_code 3010)' },
+    });
+    expect(fail.status).toBe(200);
+    expect(((await fail.json()) as { status: string }).status).toBe('requeued');
+    const runRes = await app.request(`/api/v1/runs/${runIds[1]}`, {
+      headers: { 'x-api-key': KEY },
+    });
+    const run = (await runRes.json()) as { status: string; telemetry: Record<string, unknown> };
+    expect(run.status).toBe('warn');
+    expect(run.telemetry.sessionRejections).toBe(1);
+  });
+
+  it('still rejects an unknown alarm kind (400)', async () => {
+    const res = await post('/api/v1/jobs/00000000-0000-0000-0000-000000000000/fail', {
+      worker: 'w',
+      error: 'x',
+      retryable: true,
+      alarm: { kind: 'not_a_kind' },
+    });
+    expect(res.status).toBe(400);
   });
 });

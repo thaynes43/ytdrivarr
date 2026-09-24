@@ -2,6 +2,7 @@
 
 Long-polls the CORE for jobs; for each job it stands up a browser session, does
 the hardened login + bearer mint + bounded scrape (or a bearer-only refresh),
+validates every minted session against ``/api/me`` before it can be delivered,
 and reports entries + session + telemetry, or fails with the right typed alarm.
 A background heartbeat keeps the claim alive; a 409 (reclaimed) aborts the job
 cleanly without a spurious fail.
@@ -30,6 +31,7 @@ from .numbering import EpisodeNumberer
 from .scraper import PelotonScraper, ScrapeConfig
 from .session import BrowserSession, SessionConfig
 from .transport import CoreClient, Heartbeater, Job
+from .validate_session import SessionValidator
 
 
 @dataclass
@@ -106,6 +108,7 @@ class PelotonWorker:
         login_factory: Callable[[PelotonPayload], PelotonLogin] | None = None,
         minter_factory: Callable[[PelotonPayload], BearerMinter] | None = None,
         scraper_factory: Callable[[PelotonPayload], PelotonScraper] | None = None,
+        validator_factory: Callable[[PelotonPayload], SessionValidator] | None = None,
         heartbeater_factory: Callable[[str], Heartbeater] | None = None,
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
@@ -116,6 +119,7 @@ class PelotonWorker:
         self.login_factory = login_factory or self._default_login_factory
         self.minter_factory = minter_factory or self._default_minter_factory
         self.scraper_factory = scraper_factory or self._default_scraper_factory
+        self.validator_factory = validator_factory or self._default_validator_factory
         self.heartbeater_factory = heartbeater_factory or self._default_heartbeater_factory
         self._sleep = sleep
         self._clock = clock
@@ -144,6 +148,9 @@ class PelotonWorker:
             scroll_pause_sec=pelo.scroll_pause_sec,
             page_load_wait_sec=pelo.page_load_wait_sec,
         ))
+
+    def _default_validator_factory(self, pelo: PelotonPayload) -> SessionValidator:
+        return SessionValidator()
 
     # -- loop ----------------------------------------------------------------
     def run_forever(self, stop: Callable[[], bool] | None = None) -> None:
@@ -204,6 +211,7 @@ class PelotonWorker:
         minter = self.minter_factory(pelo)
         player_url = self._refresh_player_url(pelo, driver)
         minted = minter.mint(driver, player_url)  # raises BearerCaptureError on failure
+        self._validate_session(pelo, minted)
         self._check_reclaim(hb)
         result = {
             "entries": [],
@@ -217,6 +225,7 @@ class PelotonWorker:
                 # ACTUAL capture attempts, not the configured max (`minter.retries + 1`
                 # was always the ceiling regardless of a clean first-try mint).
                 "bearerAttempts": minted.attempts,
+                "sessionValidated": True,
                 "alarms": [],
             },
             "summary": {"mode": "refresh", "bearerMinted": True},
@@ -247,6 +256,7 @@ class PelotonWorker:
         if player_url:
             minter = self.minter_factory(pelo)
             minted = minter.mint(driver, player_url)  # raises BearerCaptureError on failure
+            self._validate_session(pelo, minted)
 
         self._check_reclaim(hb)
         alarms = self._collect_alarms(results)
@@ -260,6 +270,7 @@ class PelotonWorker:
                 duration_ms=self._elapsed_ms(start),
                 alarms=alarms,
             )
+            telemetry["sessionValidated"] = minted is not None
             result = {
                 "entries": [e.to_transport() for e in entries],
                 "session": minted.to_session_payload() if minted else None,
@@ -275,6 +286,12 @@ class PelotonWorker:
         self._raise_scrape_failure(results)
 
     # -- helpers -------------------------------------------------------------
+    def _validate_session(self, pelo: PelotonPayload, minted) -> None:
+        # Never report a session Peloton would not accept: a rejection raises
+        # SessionRejectedError -> fail(retryable, alarm=session_rejected), and
+        # report() is never reached (#40).
+        self.validator_factory(pelo).validate(minted)
+
     def _collect_alarms(self, results) -> list:
         alarms = []
         for r in results:

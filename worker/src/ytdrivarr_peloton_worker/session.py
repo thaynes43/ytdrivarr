@@ -4,11 +4,16 @@ Same container binary paths and hardening flags (``--no-sandbox``,
 ``--disable-dev-shm-usage``, headless, perf-logging capability for CDP sniffing)
 but the option-building is a pure function so it can be unit-tested without
 launching a browser, and CDP capture is enabled through an explicit helper.
+
+Each session owns a throwaway ``--user-data-dir`` profile (it holds the account's
+session cookies) and removes it on ``close()`` — the donor never deleted it, so one
+profile per run piled up in /tmp.
 """
 
 from __future__ import annotations
 
 import os
+import shutil
 import tempfile
 from dataclasses import dataclass, field
 from typing import Any
@@ -21,6 +26,7 @@ from .logging_setup import get_logger
 
 DEFAULT_CHROMIUM_BINARY = os.environ.get("CHROMIUM_BINARY", "/usr/bin/chromium")
 DEFAULT_CHROMEDRIVER = os.environ.get("CHROMEDRIVER_PATH", "/usr/bin/chromedriver")
+PROFILE_PREFIX = "pelo-profile-"
 
 _LOG = get_logger(__name__)
 
@@ -36,12 +42,21 @@ class SessionConfig:
     extra_args: list[str] = field(default_factory=list)
 
 
-def build_options(config: SessionConfig) -> Options:
+def new_profile_dir() -> str:
+    """Create a fresh private Chromium profile dir. The caller owns (and removes) it."""
+    return tempfile.mkdtemp(prefix=PROFILE_PREFIX)
+
+
+def build_options(config: SessionConfig, profile_dir: str | None = None) -> Options:
     """Build Chrome/Chromium options (pure; no driver launch).
 
     Testable seam: asserts on ``--no-sandbox``, ``--disable-dev-shm-usage``,
     headless, the ``goog:loggingPrefs`` perf capability, and the container
     binary path without needing Chromium installed.
+
+    ``profile_dir`` is the ``--user-data-dir``; pass one you own (``BrowserSession``
+    does, and removes it on ``close()``). Without it a fresh dir is created that
+    nothing tracks or cleans up.
     """
     options = Options()
     if config.headless:
@@ -64,13 +79,12 @@ def build_options(config: SessionConfig) -> Options:
     if config.container_mode:
         options.binary_location = config.chromium_binary
 
-    tmp_profile = tempfile.mkdtemp(prefix="pelo-profile-")
-    options.add_argument(f"--user-data-dir={tmp_profile}")
+    options.add_argument(f"--user-data-dir={profile_dir or new_profile_dir()}")
     return options
 
 
 class BrowserSession:
-    """Owns a Chromium ``webdriver`` lifecycle (create, CDP enable, close)."""
+    """Owns a Chromium ``webdriver`` lifecycle (create, CDP enable, close) + its profile dir."""
 
     def __init__(self, config: SessionConfig | None = None,
                  driver_factory=None) -> None:
@@ -78,18 +92,27 @@ class BrowserSession:
         # Injectable for tests: a callable ``(options, service) -> WebDriver``.
         self._driver_factory = driver_factory or _default_driver_factory
         self.driver: Any | None = None
+        # The throwaway --user-data-dir this session created (removed on close()).
+        self.profile_dir: str | None = None
         self.logger = get_logger(f"{__name__}.BrowserSession")
 
     def start(self) -> Any:
-        options = build_options(self.config)
-        service = (
-            Service(self.config.chromedriver_path)
-            if self.config.container_mode
-            else None
-        )
-        self.logger.info("Creating Chromium session (headless=%s container=%s)",
-                         self.config.headless, self.config.container_mode)
-        self.driver = self._driver_factory(options, service)
+        self.profile_dir = new_profile_dir()
+        try:
+            options = build_options(self.config, profile_dir=self.profile_dir)
+            service = (
+                Service(self.config.chromedriver_path)
+                if self.config.container_mode
+                else None
+            )
+            self.logger.info("Creating Chromium session (headless=%s container=%s)",
+                             self.config.headless, self.config.container_mode)
+            self.driver = self._driver_factory(options, service)
+        except Exception:
+            # Chromium never came up: drop the profile now rather than rely on a
+            # caller reaching close() (validate.py starts outside its try).
+            self._remove_profile()
+            raise
         return self.driver
 
     def enable_cdp_capture(self) -> None:
@@ -109,6 +132,15 @@ class BrowserSession:
                 self.logger.warning("Error closing session: %s", exc)
             finally:
                 self.driver = None
+        # Only AFTER quit: Chromium holds the profile open until it exits. Runs even
+        # when quit raised, so the account's cookies never outlive the session.
+        self._remove_profile()
+
+    def _remove_profile(self) -> None:
+        if self.profile_dir is not None:
+            shutil.rmtree(self.profile_dir, ignore_errors=True)
+            self.logger.debug("Removed Chromium profile dir %s", self.profile_dir)
+            self.profile_dir = None
 
     def __enter__(self) -> Any:
         return self.start()

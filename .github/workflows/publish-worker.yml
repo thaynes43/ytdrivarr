@@ -5,12 +5,23 @@ name: publish-worker
 #   * push to main touching worker/**  -> push `latest` + `sha-<sha>`
 #   * workflow_dispatch (any branch)   -> push `sha-<sha>` (for a live branch dry-run)
 #   * pull_request touching worker/**  -> pytest + ruff + a push:false Docker smoke build
+#     (the Peloton yt-dlp plugin under src/providers/peloton/ytdlp-plugins is tested here too)
 on:
   push:
     branches: [main]
-    paths: ['worker/**', '.github/workflows/publish-worker.yml']
+    paths:
+      [
+        'worker/**',
+        'src/providers/peloton/ytdlp-plugins/**',
+        '.github/workflows/publish-worker.yml',
+      ]
   pull_request:
-    paths: ['worker/**', '.github/workflows/publish-worker.yml']
+    paths:
+      [
+        'worker/**',
+        'src/providers/peloton/ytdlp-plugins/**',
+        '.github/workflows/publish-worker.yml',
+      ]
   workflow_dispatch:
 
 concurrency:
@@ -30,7 +41,7 @@ jobs:
         run: pip install -e '.[dev]'
       - name: ruff
         working-directory: worker
-        run: ruff check src tests
+        run: ruff check src tests ../src/providers/peloton/ytdlp-plugins
       - name: pytest
         working-directory: worker
         run: pytest -q

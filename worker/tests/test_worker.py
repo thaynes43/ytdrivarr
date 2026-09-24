@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from ytdrivarr_peloton_worker.bearer import MintedSession
 from ytdrivarr_peloton_worker.emit import ScrapedClass, build_entry
-from ytdrivarr_peloton_worker.errors import BearerCaptureError
+from ytdrivarr_peloton_worker.errors import BearerCaptureError, SessionRejectedError
 from ytdrivarr_peloton_worker.login import LoginOutcome, LoginResult
 from ytdrivarr_peloton_worker.scraper import ActivityScrapeResult
 from ytdrivarr_peloton_worker.transport import Job
+from ytdrivarr_peloton_worker.validate_session import SessionValidator
 from ytdrivarr_peloton_worker.worker import PelotonPayload, PelotonWorker, WorkerConfig
 
 CONFIG = WorkerConfig(
@@ -85,6 +86,19 @@ class FakeMinter:
         return self.session
 
 
+class FakeValidator:
+    """Records every session it was asked to validate; optionally rejects it."""
+
+    def __init__(self, raise_exc=None):
+        self.raise_exc = raise_exc
+        self.validated = []
+
+    def validate(self, minted):
+        self.validated.append(minted)
+        if self.raise_exc:
+            raise self.raise_exc
+
+
 class FakeScraper:
     def __init__(self, results):
         self.results = results
@@ -127,8 +141,9 @@ class NumberingScraper:
         )
 
 
-def make_worker(client, *, login=None, scraper=None, minter=None, hb=None):
+def make_worker(client, *, login=None, scraper=None, minter=None, hb=None, validator=None):
     hb = hb or FakeHeartbeater()
+    validator = validator or FakeValidator()  # default: every minted session validates
     return PelotonWorker(
         CONFIG,
         client=client,
@@ -136,6 +151,7 @@ def make_worker(client, *, login=None, scraper=None, minter=None, hb=None):
         login_factory=lambda pelo: login or FakeLogin(LoginResult(LoginOutcome.OK)),
         minter_factory=lambda pelo: minter or FakeMinter(_minted()),
         scraper_factory=lambda pelo: scraper or FakeScraper({}),
+        validator_factory=lambda pelo: validator,
         heartbeater_factory=lambda job_id: hb,
     )
 
@@ -157,6 +173,18 @@ def _scrape_job(**pelo):
     base.update(pelo)
     return Job(id="j1", kind="discovery", provider_id="peloton",
                payload={"mode": "scrape", "peloton": base})
+
+
+def _refresh_job():
+    return Job(id="jr", kind="refresh", provider_id="peloton",
+               payload={"mode": "refresh",
+                        "peloton": {"activities": ["cycling"], "existingClassIds": ["existing1"],
+                                    "mediaRoot": "/media/peloton"}})
+
+
+def _one_entry_result():
+    return ActivityScrapeResult(activity="cycling", entries=[_entry("c1")],
+                                links_found=1, new_candidates=1)
 
 
 # -- tests -------------------------------------------------------------------
@@ -273,11 +301,7 @@ def test_heartbeat_reclaim_aborts_cleanly():
 
 
 def test_refresh_mode_mints_bearer_only():
-    job = Job(id="jr", kind="refresh", provider_id="peloton",
-              payload={"mode": "refresh",
-                       "peloton": {"activities": ["cycling"], "existingClassIds": ["existing1"],
-                                   "mediaRoot": "/media/peloton"}})
-    client = FakeClient(jobs=[job])
+    client = FakeClient(jobs=[_refresh_job()])
     worker = make_worker(client, minter=FakeMinter(_minted()))
     worker.run_once()
     assert len(client.reported) == 1
@@ -285,6 +309,77 @@ def test_refresh_mode_mints_bearer_only():
     assert payload["entries"] == []
     assert payload["session"]["bearer"] == "Bearer tok"
     assert payload["telemetry"]["mode"] == "refresh"
+
+
+# -- /api/me session validation before delivery (#40) ------------------------
+def test_refresh_validated_session_is_reported():
+    minted = _minted()
+    validator = FakeValidator()
+    client = FakeClient(jobs=[_refresh_job()])
+    make_worker(client, minter=FakeMinter(minted), validator=validator).run_once()
+    assert validator.validated == [minted]  # exactly the session that gets delivered
+    assert len(client.reported) == 1 and client.failed == []
+    _, payload = client.reported[0]
+    assert payload["session"]["bearer"] == "Bearer tok"
+    assert payload["telemetry"]["sessionValidated"] is True
+
+
+def test_refresh_rejected_session_fails_and_is_never_reported():
+    validator = FakeValidator(SessionRejectedError("session rejected by /api/me: HTTP 401"))
+    client = FakeClient(jobs=[_refresh_job()])
+    make_worker(client, validator=validator).run_once()
+    assert client.reported == []
+    assert len(client.failed) == 1
+    f = client.failed[0]
+    assert f["retryable"] is True
+    assert f["alarm"]["kind"] == "session_rejected"
+    assert "401" in f["error"]
+
+
+def test_scrape_validated_session_is_reported():
+    minted = _minted()
+    validator = FakeValidator()
+    client = FakeClient(jobs=[_scrape_job()])
+    make_worker(client, scraper=FakeScraper({"cycling": _one_entry_result()}),
+                minter=FakeMinter(minted), validator=validator).run_once()
+    assert validator.validated == [minted]
+    assert len(client.reported) == 1 and client.failed == []
+    _, payload = client.reported[0]
+    assert payload["session"]["bearer"] == "Bearer tok"
+    assert payload["telemetry"]["sessionValidated"] is True
+
+
+def test_scrape_rejected_session_fails_and_is_never_reported():
+    validator = FakeValidator(SessionRejectedError("session rejected by /api/me: HTTP 403"))
+    client = FakeClient(jobs=[_scrape_job()])
+    make_worker(client, scraper=FakeScraper({"cycling": _one_entry_result()}),
+                validator=validator).run_once()
+    assert client.reported == []  # entries AND session held back; the retry re-mints
+    assert len(client.failed) == 1
+    f = client.failed[0]
+    assert f["retryable"] is True
+    assert f["alarm"]["kind"] == "session_rejected"
+
+
+def test_default_validator_factory_is_the_real_validator():
+    worker = PelotonWorker(CONFIG, client=FakeClient())
+    assert isinstance(worker.validator_factory(PelotonPayload()), SessionValidator)
+
+
+def test_scrape_without_player_url_skips_validation():
+    # Zero new entries and no existing ids -> nothing to mint from -> nothing to
+    # validate; the run still reports honestly with no session.
+    empty = ActivityScrapeResult(activity="cycling", entries=[], links_found=5,
+                                 new_candidates=0, skipped_existing=5)
+    validator = FakeValidator(SessionRejectedError("must not be called"))
+    client = FakeClient(jobs=[_scrape_job()])
+    make_worker(client, scraper=FakeScraper({"cycling": empty}), validator=validator).run_once()
+    assert validator.validated == []
+    assert client.failed == []
+    assert len(client.reported) == 1
+    _, payload = client.reported[0]
+    assert payload["session"] is None
+    assert payload["telemetry"]["sessionValidated"] is False
 
 
 # -- per-(activity, duration) numbering (the contract fix) --------------------

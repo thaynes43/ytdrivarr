@@ -135,6 +135,7 @@ interface RunAggRow {
   login_failures: number;
   bearer_attempts: number;
   bearer_capture_retries: number;
+  session_rejections: number;
 }
 
 interface LastRunRow {
@@ -311,7 +312,8 @@ export async function collectMetrics(opts: CollectMetricsOptions = {}): Promise<
         coalesce(sum((telemetry->>'loginAttempts')::numeric), 0)::float8 as login_attempts,
         coalesce(sum((telemetry->>'loginFailures')::numeric), 0)::float8 as login_failures,
         coalesce(sum((telemetry->>'bearerAttempts')::numeric), 0)::float8 as bearer_attempts,
-        coalesce(sum((telemetry->>'bearerCaptureRetries')::numeric), 0)::float8 as bearer_capture_retries
+        coalesce(sum((telemetry->>'bearerCaptureRetries')::numeric), 0)::float8 as bearer_capture_retries,
+        coalesce(sum((telemetry->>'sessionRejections')::numeric), 0)::float8 as session_rejections
       from runs
       group by coalesce(provider_id, 'core')
     `);
@@ -326,6 +328,7 @@ export async function collectMetrics(opts: CollectMetricsOptions = {}): Promise<
     const loginAttempts: MetricSample[] = [];
     const loginFailures: MetricSample[] = [];
     const bearerRetries: MetricSample[] = [];
+    const sessionRejections: MetricSample[] = [];
     for (const r of runRows) {
       const provider = r.provider;
       runsTotal.push({ labels: { provider, status: 'ok' }, value: num(r.runs_ok) });
@@ -342,6 +345,7 @@ export async function collectMetrics(opts: CollectMetricsOptions = {}): Promise<
         labels: { provider },
         value: num(r.bearer_attempts) + num(r.bearer_capture_retries),
       });
+      sessionRejections.push({ labels: { provider }, value: num(r.session_rejections) });
     }
     metrics.push({
       name: 'ytdrivarr_runs_total',
@@ -396,6 +400,12 @@ export async function collectMetrics(opts: CollectMetricsOptions = {}): Promise<
       help: 'Cumulative bearer-capture attempts/retries across all runs (the never-silent-stale-token guard).',
       type: 'counter',
       samples: bearerRetries,
+    });
+    metrics.push({
+      name: 'ytdrivarr_session_rejections_total',
+      help: 'Cumulative minted sessions the worker refused to deliver because Peloton /api/me rejected them (the session_rejected alarm, issue #40).',
+      type: 'counter',
+      samples: sessionRejections,
     });
 
     // --- last run per provider — the #2168 snapshot (counts, status, duration, per-activity) -----

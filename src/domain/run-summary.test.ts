@@ -88,6 +88,7 @@ describe('buildRunSummary + renderRunSummaryMarkdown', () => {
         selectorDriftHits: 1,
         bearerCaptureRetries: 2,
         loginFailures: 1,
+        sessionRejections: 3,
         overCapActivities: ['Strength'],
         scrollTimeouts: ['Yoga'],
       },
@@ -95,6 +96,9 @@ describe('buildRunSummary + renderRunSummaryMarkdown', () => {
     expect(withIssues.issues).toContain('selector drift on Cycling');
     expect(withIssues.issues).toContain('bearer capture retried 2×');
     expect(withIssues.issues).toContain('login failed 1×');
+    expect(withIssues.issues).toContain(
+      'minted session rejected by Peloton /api/me 3× (not delivered)',
+    );
     expect(withIssues.issues).toContain('over cap: Strength');
     expect(withIssues.issues).toContain('scroll timeout on Yoga');
     const md = renderRunSummaryMarkdown(withIssues);

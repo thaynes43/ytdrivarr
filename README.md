@@ -32,8 +32,10 @@ changing behavior:
 Two hard boundaries frame the whole design:
 
 1. **ytdl-sub stays the execution engine.** ytdrivarr never vendors yt-dlp; it renders the
-   `config.yaml` and `subscriptions.yaml` that the existing ytdl-sub downloader CronJobs consume.
-   Extractor breakage becomes a per-source health signal, not a treadmill this service owns.
+   `config.yaml` and `subscriptions.yaml` that the existing ytdl-sub downloader CronJobs consume,
+   plus whatever a provider contributes for its own entries (Peloton's yt-dlp extractor override —
+   see [Provider downloader assets](#provider-downloader-assets)). Extractor breakage becomes a
+   per-source health signal, not a treadmill this service owns.
 2. **The contracts come before the port.** The C1–C8 provider interfaces are specified first; a
    heavy provider (the Peloton port) validates the seam, it does not define it.
 
@@ -67,6 +69,26 @@ The core owns the rest: a **typed provider registry** (a compile-time map — a 
 a startup error), a **job dispatcher** (`in_core` inline vs `out_of_process` enqueued to a worker),
 config **emission** by preset composition (both `video` and `music` preset families), core-owned
 **dedup** + an immutable season/episode guard, and **atomic projection** (write-temp-then-rename).
+
+### Provider downloader assets
+
+A provider can ship files its entries need at download time (`downloaderAssets`, see
+`src/contracts/downloader-assets.ts`). On every projection of a Library with at least one
+**enabled** Source of that provider, the core mirrors the provider's tree into the Library's
+projection dir, beside `subscriptions.yaml`:
+
+| Kind           | Shipped from                        | Projected to                                |
+| -------------- | ----------------------------------- | ------------------------------------------- |
+| `ytdlpPlugins` | `src/providers/<id>/ytdlp-plugins/` | `<projectionDir>/.ytdrivarr/ytdlp-plugins/` |
+
+Peloton contributes its yt-dlp extractor override (issue #40), so the live Peloton Library
+(`/projections/peloton` in the core, `/media/peloton` in the downloader) carries
+`.ytdrivarr/ytdlp-plugins/yt_dlp_plugins/extractor/ytdrivarr_peloton.py`; the downloader puts
+`/media/peloton/.ytdrivarr/ytdlp-plugins` on `PYTHONPATH` and yt-dlp loads it as a plugin. A
+YouTube-only Library gets nothing. Writes are atomic and skipped when unchanged; files a provider
+no longer ships are pruned (the whole dir goes when no provider feeds the Library any more).
+`pnpm build` copies the trees to `dist/assets/`, and the core refuses to boot if a declared tree is
+missing.
 
 ## The operator console
 
@@ -145,6 +167,7 @@ pnpm start
 | `AUTH_MODE`                    | no            | `api-key` (default — a key is required) or `open` (no key required for any request; LAN-only).                                        |
 | `DATABASE_URL`                 | yes (runtime) | PostgreSQL 16 connection string.                                                                                                      |
 | `PROJECTION_ROOT`              | no            | Base directory a Library's relative `projectionPath` resolves under.                                                                  |
+| `YTDRIVARR_ASSETS_DIR`         | no            | Provider downloader-asset root (`<id>/ytdlp-plugins/…`). Default: `dist/assets` beside the bundle, else `src/providers` (dev).        |
 | `PORT`                         | no            | HTTP port (default `8080`).                                                                                                           |
 | `LOG_LEVEL`                    | no            | pino level (default `info`).                                                                                                          |
 | `YTDRIVARR_SKIP_MIGRATE`       | no            | Skip on-boot migrations (`1`/`true`). Migrations otherwise run idempotently on start.                                                 |
@@ -206,6 +229,7 @@ labels the per-activity Peloton series (watch-grain: one Source per activity, `r
 | `ytdrivarr_entries_added_total` / `_removed_total` / `_windowed_out_total` / `_deduped_total`                                          | counter | `provider`                        | Cumulative entry deltas across all runs (use `increase()`).                                  |
 | `ytdrivarr_login_attempts_total` / `_failures_total`                                                                                   | counter | `provider`                        | Cumulative worker login outcomes across all runs.                                            |
 | `ytdrivarr_bearer_capture_retries_total`                                                                                               | counter | `provider`                        | Cumulative bearer-capture attempts/retries (never-silent-stale-token guard).                 |
+| `ytdrivarr_session_rejections_total`                                                                                                   | counter | `provider`                        | Cumulative minted sessions Peloton `/api/me` rejected, so none was delivered (issue #40).    |
 | `ytdrivarr_last_run_status`                                                                                                            | gauge   | `provider`                        | Last run status code: 0=ok 1=warn 2=error 3=running.                                         |
 | `ytdrivarr_last_run_timestamp_seconds` / `ytdrivarr_last_success_timestamp_seconds`                                                    | gauge   | `provider`                        | Last run / last successful (ok\|warn) run time — age = `time() - …`.                         |
 | `ytdrivarr_last_run_duration_seconds`                                                                                                  | gauge   | `provider`                        | Wall-clock duration of the last finalized run.                                               |

@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { mediaKindSchema } from '../contracts';
 import { remediationActionSchema } from '../contracts';
 import { subscriptionEntrySchema } from '../contracts';
+import { alarmKindSchema } from '../core/jobs';
 
 /** Zod schemas for every REST request/response (DESIGN-045 D-01) — OpenAPI is generated from them. */
 
@@ -359,7 +360,9 @@ export const reportJobBody = z.object({
   worker: z.string().min(1),
   result: z.object({
     entries: z.array(subscriptionEntrySchema),
-    session: sessionArtifactsDto.optional(),
+    // `null` = no session minted (a scrape that found no class player URL to mint from — the
+    // worker sends `"session": null`); treated exactly like an absent session, never delivered.
+    session: sessionArtifactsDto.nullish().transform((session) => session ?? undefined),
     telemetry: jsonObject.optional(),
     summary: jsonObject.optional(),
   }),
@@ -382,7 +385,7 @@ export const failJobBody = z.object({
   retryable: z.boolean(),
   alarm: z
     .object({
-      kind: z.enum(['login', 'bearer_capture', 'selector_drift', 'scroll_timeout']),
+      kind: z.enum(alarmKindSchema),
       message: z.string().optional(),
     })
     .optional(),

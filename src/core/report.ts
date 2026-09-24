@@ -15,6 +15,7 @@ import { deliverSession } from './credentials';
 import { dropTitleCollisions, preservePublishedNumbering } from './dedup';
 import { DEFAULT_EMIT_WINDOW_DAYS } from './emit-window';
 import { projectLibrary, resolveProjectionDir } from './projection';
+import { projectLibraryAssets } from './downloader-assets';
 import { recomposeLibrary, type RecomposeSource } from './recompose';
 import { getLibrary } from '../domain/libraries';
 import { listSourcesForLibrary } from '../domain/sources';
@@ -43,7 +44,8 @@ import type { DiscoveryPayload } from './jobs';
  *      preserving IMMUTABLE published numbering (the re-key guard);
  *   3. delivers the session artifacts (bearer.txt / cookies.txt) to the downloader's reach + records
  *      the mint time in provider state (the credential-age alarm reads it);
- *   4. recomposes the whole Library and ATOMICALLY projects config.yaml + subscriptions.yaml;
+ *   4. recomposes the whole Library and ATOMICALLY projects config.yaml + subscriptions.yaml (+ the
+ *      feeding providers' downloader assets, e.g. Peloton's yt-dlp plugin, under `.ytdrivarr/`);
  *   5. FINALIZES the linked Run (ok/warn) with counts, telemetry, and the rendered owner summary,
  *      and marks the job done.
  */
@@ -196,6 +198,9 @@ export async function reportJob(input: ReportJobInput): Promise<ReportJobOutcome
   );
   const dir = resolveProjectionDir(library.projectionPath, input.projectionRoot);
   await projectLibrary(dir, recomposed.emitted);
+  // …plus the downloader assets of every provider feeding the library (Peloton's yt-dlp extractor
+  // override lands beside subscriptions.yaml under `.ytdrivarr/`, issue #40).
+  await projectLibraryAssets(dir, sources);
 
   // 5) finalize the Run with counts + telemetry + the owner summary, and mark the job done.
   //    The watch-grain split makes the per-activity Changes breakdown a CORE fact: each activity

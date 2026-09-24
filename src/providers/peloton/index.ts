@@ -123,6 +123,11 @@ export const pelotonProvider: SourceProvider = {
   // donor-parity sliding window (PELOTON_EMIT_WINDOW_DAYS) — stale classes drop from the file, the
   // download-archive keeps them downloaded (core/emit-window.ts).
   emitWindow: true,
+  // Issue #40: Peloton re-signed its manifest URLs and yt-dlp's built-in extractor 403s, so the
+  // provider ships its own extractor override (`./ytdlp-plugins/yt_dlp_plugins/extractor/`). The
+  // core projects it beside `subscriptions.yaml` of every Library this provider feeds — and only
+  // those (core/downloader-assets.ts).
+  downloaderAssets: ['ytdlpPlugins'],
   settingsSchema: pelotonSettingsSchema,
   // Nightly scrape (the donor's 22:00 lineage) + the bearer-freshness SLA tuned to that cadence
   // (issue #23): warn at a missed nightly (~30h), error approaching real expiry (~52h) — D-07/D-15.

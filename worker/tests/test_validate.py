@@ -8,6 +8,7 @@ import yaml
 
 from conftest import FakeDriver, make_class_link
 from ytdrivarr_peloton_worker.bearer import MintedSession
+from ytdrivarr_peloton_worker.errors import SessionRejectedError
 from ytdrivarr_peloton_worker.login import LoginOutcome, LoginResult
 from ytdrivarr_peloton_worker.scraper import LINK_SELECTOR, PelotonScraper, ScrapeConfig
 from ytdrivarr_peloton_worker.validate import ValidationDeps, run_validation
@@ -41,6 +42,17 @@ class _Minter:
         return self.minted
 
 
+class _Validator:
+    def __init__(self, raise_exc=None):
+        self.raise_exc = raise_exc
+        self.validated = []
+
+    def validate(self, minted):
+        self.validated.append(minted)
+        if self.raise_exc:
+            raise self.raise_exc
+
+
 def _fixture_driver(links):
     d = FakeDriver()
     d.find_elements_handler = lambda by, value: list(links) if value == LINK_SELECTOR else []
@@ -49,7 +61,7 @@ def _fixture_driver(links):
     return d
 
 
-def _deps(links, *, login_outcome=LoginOutcome.OK):
+def _deps(links, *, login_outcome=LoginOutcome.OK, session_validator=None):
     driver = _fixture_driver(links)
     return ValidationDeps(
         session_factory=lambda: _Session(driver),
@@ -59,6 +71,7 @@ def _deps(links, *, login_outcome=LoginOutcome.OK):
             max_classes=5, dynamic_scrolling=True, max_scrolls=2,
             scroll_pause_sec=0.03, page_load_wait_sec=0.05, poll=0.01)),
         username="u", password="p",
+        session_validator=session_validator,
     )
 
 
@@ -135,3 +148,34 @@ def test_validation_closes_session(tmp_path):
     run_validation(activities=["cycling"], scratch=str(tmp_path / "o"),
                    media_root="/media/peloton", deps=deps)
     assert session.closed is True
+
+
+def test_validation_checks_minted_session_when_validator_given(tmp_path):
+    validator = _Validator()
+    links = [make_class_link("v1", "30 min Ride", "Cody Rigsby")]
+    report = run_validation(activities=["cycling"], scratch=str(tmp_path / "o"),
+                            media_root="/media/peloton",
+                            deps=_deps(links, session_validator=validator))
+    assert len(validator.validated) == 1
+    assert report["bearer"]["validated"] is True
+    assert "validationError" not in report["bearer"]
+
+
+def test_validation_records_rejected_session(tmp_path):
+    validator = _Validator(SessionRejectedError("session rejected by /api/me: HTTP 401 error_code=3010"))
+    links = [make_class_link("v1", "30 min Ride", "Cody Rigsby")]
+    report = run_validation(activities=["cycling"], scratch=str(tmp_path / "o"),
+                            media_root="/media/peloton",
+                            deps=_deps(links, session_validator=validator))
+    assert report["bearer"]["captured"] is True
+    assert report["bearer"]["validated"] is False
+    assert "3010" in report["bearer"]["validationError"]
+    # The shape verdict still renders; the rejection is surfaced, not a crash.
+    assert report["stage"] == "done"
+
+
+def test_validation_without_validator_skips_the_check(tmp_path):
+    links = [make_class_link("v1", "30 min Ride", "Cody Rigsby")]
+    report = run_validation(activities=["cycling"], scratch=str(tmp_path / "o"),
+                            media_root="/media/peloton", deps=_deps(links))
+    assert "validated" not in report["bearer"]

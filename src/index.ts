@@ -6,6 +6,7 @@ import { runMigrations } from './db/migrate';
 import { createApp, type CreateAppOptions } from './api/app';
 import { Scheduler } from './core/scheduler';
 import { runDiscovery } from './core/discovery';
+import { assertDownloaderAssets } from './core/downloader-assets';
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -13,6 +14,11 @@ async function main(): Promise<void> {
   // A provider that fails to load is a STARTUP ERROR, never a silent skip (D-04).
   loadRegistry();
   logger.info({ providers: listProviders().map((p) => p.id) }, 'provider registry loaded');
+
+  // Every provider's declared downloader assets (Peloton's yt-dlp plugin, issue #40) must ship with
+  // this build — a misbuilt image fails HERE, not silently at the nightly projection.
+  const assets = await assertDownloaderAssets();
+  logger.info(assets, 'provider downloader assets present');
 
   if (config.databaseUrl && !config.skipMigrate) {
     await runMigrations({ databaseUrl: config.databaseUrl });

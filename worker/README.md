@@ -20,9 +20,10 @@ worker/
   pyproject.toml            # package + ruff + pytest config (src layout)
   Dockerfile                # python:3.13-slim + chromium + chromium-driver + ffmpeg, non-root
   src/ytdrivarr_peloton_worker/
-    session.py              # Chromium session (headless, --no-sandbox, perf-logging cap) + CDP enable
+    session.py              # Chromium session (headless, --no-sandbox, perf-logging cap) + CDP enable; owns + removes its temp profile dir
     login.py                # HARDENED login -> typed outcome: ok|bad_credentials|mfa_required|captcha|redirect|timeout
     bearer.py               # HARDENED bearer+cookie mint (CDP sniff) -> BearerCaptureError, Netscape cookies, JWT exp
+    validate_session.py     # GET /api/me with the exact minted bearer + cookies before delivery -> SessionRejectedError
     scraper.py              # HARDENED scrape (waits, stale-retry, cap, dedup, drift/scroll signals)
     numbering.py            # per-(activity,duration) episode counter; one band per activity, continues from payload high-water mark
     folders.py              # activity->folder + bootcamp collapse (donor-exact)
@@ -32,7 +33,7 @@ worker/
     worker.py               # the claim->heartbeat->scrape/refresh->report/fail loop
     validate.py             # VALIDATION / DRY-RUN mode (writes ONLY to a scratch path)
     waits.py, errors.py, baked_sample.py, logging_setup.py, __main__.py
-  tests/                    # 92 tests, fully stubbed driver + stub core (no network, no browser)
+  tests/                    # 138 tests, fully stubbed driver + stub core + mocked HTTP (no network, no browser)
 ```
 
 ## The transport contract (client side; the core implements the server)
@@ -56,8 +57,17 @@ Each reported entry serializes to the live-file shape:
               "season_number":<duration>,"episode_number":<N>}}
 ```
 
-`session` carries `{bearer, cookies (Netscape cookies.txt), mintedAt, expiresAt?}`.
+`session` carries `{bearer, cookies (Netscape cookies.txt), mintedAt, expiresAt?}`, or `null`
+when a scrape had no class player URL to mint from (the core then delivers nothing).
 `mode:'refresh'` = login + bearer mint only (no scrape) for the bearer-freshness SLA (D-07).
+
+The worker never reports a session it could not validate (#40): every mint, refresh or scrape, is
+first replayed against `GET https://api.onepeloton.com/api/me` with exactly what will be delivered
+(the bearer verbatim — it already starts with `Bearer `, never re-prefix it — plus the minted
+cookies and members-site headers). Anything but a 200 fails the job `retryable` with alarm
+`session_rejected`, naming the HTTP status (or exception class) and Peloton's `error_code` — never
+the token or cookie values. `alarm.kind` is one of `login`, `bearer_capture`, `selector_drift`,
+`scroll_timeout`, `session_rejected`.
 
 The inbound `payload.peloton.episodeNumbering` is **per-(activity, duration)**:
 `{ [activitySlug]: { [durationString]: currentMax } }` (donor parity — each activity
@@ -93,7 +103,8 @@ Optional env: `WORKER_NAME` (default hostname), `WORKER_KINDS` (comma list), `WO
 
 ## Run the validation dry-run (the in-cluster PR-Health artifact)
 
-Does a **real** login → **real** bearer mint → **real** bounded scrape, renders
+Does a **real** login → **real** bearer mint (+ the same `/api/me` session check, recorded as
+`bearer.validated` / `bearer.validationError`) → **real** bounded scrape, renders
 `subscriptions.yaml` to a scratch path, and prints a JSON summary + human summary +
 shape-diff verdict. **Zero live writes**: it writes ONLY under `--scratch` (no NFS
 `bearer.txt`/`cookies.txt`, no core round-trip).
@@ -117,7 +128,7 @@ and `/tmp/pelo-out/summary.json`. (Locally without the image:
 ```bash
 cd worker
 pip install -e '.[dev]'
-pytest -q           # 92 tests, no network/browser needed
+pytest -q           # 138 tests, no network/browser needed
 ruff check src tests
 ```
 
@@ -133,6 +144,8 @@ ruff check src tests
 | Bearer failure      | bare `RuntimeError`, whole run fails silently | typed `BearerCaptureError` → `fail(retryable, alarm=bearer_capture)`; never a stale/empty token |
 | Bearer retries      | none                                          | re-navigate + retry with backoff                                                                |
 | Bearer freshness    | none                                          | best-effort JWT `exp` decode → `expiresAt` for the SLA                                          |
+| Session check       | none — a dead token was delivered as-is       | `GET /api/me` with the delivered bearer + cookies → `fail(retryable, alarm=session_rejected)`   |
+| Chromium profile    | `mkdtemp` profile per run, never deleted      | owned by `BrowserSession`, removed on `close()` after `quit()` (and on a failed start)          |
 | Scrape page-load    | `time.sleep(10)`                              | `WebDriverWait` for ≥1 class link                                                               |
 | Scroll              | blind `time.sleep(3)` × N                     | per-scroll `WebDriverWait` for link growth + stall/bottom detection                             |
 | Stale elements      | uncaught                                      | retried (bounded) without losing collected/numbered classes                                     |
