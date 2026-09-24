@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.2](https://github.com/thaynes43/ytdrivarr/compare/v0.9.1...v0.9.2) (2026-09-24)
+
+
+### Bug Fixes
+
+* **peloton:** ship a yt-dlp override for Peloton's signed stream URLs; validate sessions before delivery ([#40](https://github.com/thaynes43/ytdrivarr/issues/40)) ([#41](https://github.com/thaynes43/ytdrivarr/issues/41)) ([d4633fe](https://github.com/thaynes43/ytdrivarr/commit/d4633fe150087cee7f968b9995bf9298d7650642))
+
 ## [0.9.1](https://github.com/thaynes43/ytdrivarr/compare/v0.9.0...v0.9.1) (2026-07-28)
 
 
