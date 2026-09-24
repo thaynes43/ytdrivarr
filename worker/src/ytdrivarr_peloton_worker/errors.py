@@ -4,7 +4,7 @@ The donor's failure mode was a bare ``RuntimeError`` on bearer-capture failure
 that failed the whole run, leaving the downloader running an aging token with no
 alarm (Q-03 "bearer hard-fail silent-stall blast radius"). Here every fragile
 leg raises a typed error the main loop maps to a transport ``fail`` with the
-right ``retryable`` flag and one of the four contract alarm kinds.
+right ``retryable`` flag and one of the five contract alarm kinds.
 """
 
 from __future__ import annotations
@@ -13,12 +13,13 @@ from enum import Enum
 
 
 class AlarmKind(str, Enum):
-    """The four first-class worker alarm kinds in the transport contract."""
+    """The five first-class worker alarm kinds in the transport contract."""
 
     LOGIN = "login"
     BEARER_CAPTURE = "bearer_capture"
     SELECTOR_DRIFT = "selector_drift"
     SCROLL_TIMEOUT = "scroll_timeout"
+    SESSION_REJECTED = "session_rejected"
 
 
 class WorkerError(Exception):
@@ -62,6 +63,20 @@ class BearerCaptureError(WorkerError):
 
     retryable = True
     alarm_kind = AlarmKind.BEARER_CAPTURE
+
+
+class SessionRejectedError(WorkerError):
+    """A freshly minted session failed its ``GET /api/me`` check (#40).
+
+    The bearer + cookies were captured but Peloton would not accept them, so they
+    are never reported (a delivered-but-dead session is the silent stall again).
+    Retryable: the next attempt re-logs in and mints fresh. The message names the
+    HTTP status / exception class and Peloton's ``error_code`` — never the token,
+    a cookie value or the response body.
+    """
+
+    retryable = True
+    alarm_kind = AlarmKind.SESSION_REJECTED
 
 
 class SelectorDriftError(WorkerError):

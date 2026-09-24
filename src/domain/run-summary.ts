@@ -59,7 +59,7 @@ export interface RunSummary {
   changes: RunSummaryChanges;
   health: RunSummaryHealth;
   /** the alarm list (D-10): selector-drift activities, bearer-capture retries, login failures,
-   * over-cap activities, scroll timeouts. Empty ⇒ rendered as "none". */
+   * rejected sessions, over-cap activities, scroll timeouts. Empty ⇒ rendered as "none". */
   issues: string[];
 }
 
@@ -86,6 +86,9 @@ export interface PelotonTelemetry {
   loginOk?: boolean;
   bearerCaptureRetries?: number;
   loginFailures?: number;
+  /** the `session_rejected` alarm (issue #40): attempts whose minted session Peloton's `/api/me`
+   * refused — the worker delivered nothing rather than a session the downloader would fail on. */
+  sessionRejections?: number;
   overCapActivities?: string[];
   bearerMintedAt?: string;
   maxClassesPerActivity?: number;
@@ -188,6 +191,11 @@ export function buildRunSummary(opts: BuildRunSummaryOptions): RunSummary {
   }
   if (num(telemetry.loginFailures) > 0) {
     issues.push(`login failed ${num(telemetry.loginFailures)}×`);
+  }
+  if (num(telemetry.sessionRejections) > 0) {
+    issues.push(
+      `minted session rejected by Peloton /api/me ${num(telemetry.sessionRejections)}× (not delivered)`,
+    );
   }
   for (const a of telemetry.overCapActivities ?? []) {
     issues.push(`over cap: ${a}`);

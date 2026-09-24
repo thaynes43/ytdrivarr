@@ -7,9 +7,10 @@ coverage/
 .env.*
 .dev-projection/
 
-# python worker build/bytecode artifacts
-worker/**/__pycache__/
-worker/**/*.pyc
+# python build/bytecode artifacts (the worker, and provider downloader assets such as
+# src/providers/peloton/ytdlp-plugins, which the worker's tests import)
+**/__pycache__/
+*.pyc
 worker/build/
 worker/**/*.egg-info/
 worker/.pytest_cache/

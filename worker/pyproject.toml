@@ -21,6 +21,9 @@ dev = [
     "pytest>=7.4",
     "responses>=0.24",
     "ruff>=0.4",
+    # tests/test_ytdlp_plugin.py: the Peloton yt-dlp plugin ytdrivarr projects to the
+    # downloader — pinned to the yt-dlp that ytdl-sub pins (ytdl-sub 2026.08.26).
+    "yt-dlp==2026.8.19",
 ]
 
 [project.scripts]

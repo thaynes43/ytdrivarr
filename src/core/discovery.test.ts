@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
 import { bootTestDb, type TestDb } from '../testing/db';
 import { jobs, type Library } from '../db/schema';
 import { createLibrary } from '../domain/libraries';
-import { createSource } from '../domain/sources';
+import { createSource, setSourceEnabled } from '../domain/sources';
 import { getRun } from '../domain/runs';
 import { listEntriesForSource } from '../domain/entries';
 import { runDiscovery } from './discovery';
@@ -173,5 +173,44 @@ describe('runDiscovery — provider scope', () => {
     await expect(
       runDiscovery({ scope: 'provider', providerId: 'nope', trigger: 'cron', db: t.db }),
     ).rejects.toThrow(/unknown provider/i);
+  });
+});
+
+describe('runDiscovery — provider downloader assets (issue #40)', () => {
+  const pluginDir = (slug: string) =>
+    join(projectionRoot, `video-${slug}`, '.ytdrivarr', 'ytdlp-plugins', 'yt_dlp_plugins');
+
+  it('projects the Peloton plugin into a library Peloton feeds — even on a YouTube-scoped tick', async () => {
+    const mixed = await seedVideoLibrary('mixed');
+    await seedYoutubeSource(mixed.id);
+    const cycling = await seedPelotonSource(mixed.id, 'cycling');
+    const ytOnly = await seedVideoLibrary('yt-only');
+    await seedYoutubeSource(ytOnly.id);
+
+    // A YouTube tick re-projects EVERY library; "fed by Peloton" is the library's whole source
+    // list, never the run's scope — so the mixed library still gets (keeps) Peloton's plugin.
+    await runDiscovery({
+      scope: 'provider',
+      providerId: 'youtube',
+      trigger: 'cron',
+      projectionRoot,
+      db: t.db,
+    });
+    expect(await readdir(join(pluginDir('mixed'), 'extractor'))).toContain('ytdrivarr_peloton.py');
+    // …and a YouTube-only library gets nothing beside its YAML.
+    await expect(stat(join(projectionRoot, 'video-yt-only', '.ytdrivarr'))).rejects.toThrow();
+
+    // Unmonitoring every Peloton activity stops Peloton feeding the library: the next projection
+    // removes its plugin (nothing Peloton is emitted any more).
+    await setSourceEnabled({ id: cycling.id, enabled: false, db: t.db });
+    await runDiscovery({
+      scope: 'library',
+      scopeRef: mixed.id,
+      trigger: 'api',
+      projectionRoot,
+      db: t.db,
+    });
+    await expect(stat(join(projectionRoot, 'video-mixed', '.ytdrivarr'))).rejects.toThrow();
+    expect(await readdir(join(projectionRoot, 'video-mixed'))).toContain('subscriptions.yaml');
   });
 });

@@ -20,6 +20,7 @@ import {
   heartbeatJob,
 } from './jobs';
 import { reportJob } from './report';
+import { resolveAssetRoot } from './downloader-assets';
 import { ConflictError } from '../errors';
 import type { SubscriptionEntry } from '../contracts';
 
@@ -359,6 +360,54 @@ describe('job lifecycle', () => {
     expect(run?.telemetry.bearerCaptureRetries).toBeGreaterThan(0);
     expect(run?.summary).not.toBeNull();
   });
+
+  it('session_rejected (issue #40): retry + alarm, then a terminal Run error naming the rejection', async () => {
+    const lib = await seedLibrary();
+    const src = await seedSource(lib.id);
+    const { jobId, runId } = await enqueueForSource(src, lib);
+    const rejected = {
+      kind: 'session_rejected' as const,
+      message: 'Peloton /api/me rejected the minted session: HTTP 401 (error_code 3010)',
+    };
+
+    // retryable → requeued; the Run stays running as warn with the alarm + its counter recorded.
+    await claimJob({ worker: 'w', db: t.db });
+    const first = await failJob({
+      id: jobId,
+      worker: 'w',
+      error: rejected.message,
+      retryable: true,
+      alarm: rejected,
+      maxAttempts: 2,
+      db: t.db,
+    });
+    expect(first.status).toBe('requeued');
+    let run = await getRun(runId, t.db);
+    expect(run?.status).toBe('warn');
+    expect(run?.telemetry.sessionRejections).toBe(1);
+    expect(run?.telemetry.alarms).toEqual([
+      expect.objectContaining({ kind: 'session_rejected', message: rejected.message }),
+    ]);
+
+    // at the ceiling → terminal: Run error, the owner summary lists the rejection as an issue.
+    await claimJob({ worker: 'w', db: t.db });
+    const second = await failJob({
+      id: jobId,
+      worker: 'w',
+      error: rejected.message,
+      retryable: true,
+      alarm: rejected,
+      maxAttempts: 2,
+      db: t.db,
+    });
+    expect(second.status).toBe('error');
+    run = await getRun(runId, t.db);
+    expect(run?.status).toBe('error');
+    expect(run?.telemetry.sessionRejections).toBe(2);
+    expect((run?.summary as { issues?: string[] } | null)?.issues).toContain(
+      'minted session rejected by Peloton /api/me 2× (not delivered)',
+    );
+  });
 });
 
 describe('report path', () => {
@@ -435,6 +484,17 @@ describe('report path', () => {
     ) as Record<string, unknown>;
     const preset = subs['Plex TV Show by Date'] as Record<string, Record<string, unknown>>;
     expect(preset['= Cycling (30 min)']).toBeDefined();
+
+    // …and beside it the Peloton provider's yt-dlp extractor override (issue #40), byte-identical
+    // to the tree the provider ships, so the downloader mounting the projection gets it too.
+    const pluginRel = ['yt_dlp_plugins', 'extractor', 'ytdrivarr_peloton.py'];
+    const projectedPlugin = await readFile(
+      join(root, 'peloton-out', '.ytdrivarr', 'ytdlp-plugins', ...pluginRel),
+    );
+    const shippedPlugin = await readFile(
+      join(resolveAssetRoot(), 'peloton', 'ytdlp-plugins', ...pluginRel),
+    );
+    expect(projectedPlugin.equals(shippedPlugin)).toBe(true);
 
     // Run finalized ok with counts + a real summary; job done.
     expect(outcome.status).toBe('ok');

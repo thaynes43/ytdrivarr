@@ -3,7 +3,8 @@
     python -m ytdrivarr_peloton_worker.validate \
         --activities Cycling --max-classes 5 --scratch /tmp/pelo-out [--headless]
 
-Does a REAL login (env creds) -> REAL bearer mint -> REAL bounded scrape
+Does a REAL login (env creds) -> REAL bearer mint (+ the same ``/api/me``
+session check the worker runs before delivery) -> REAL bounded scrape
 (limited scrolls/classes) -> renders ``subscriptions.yaml`` to the scratch path
 -> prints a structured JSON summary + a human summary + a shape-diff verdict
 versus the baked live-file sample.
@@ -27,11 +28,13 @@ from pathlib import Path
 
 from .bearer import BearerCaptureError, BearerMinter
 from .emit import build_summary, build_telemetry, render_subscriptions_yaml, shape_diff
+from .errors import SessionRejectedError
 from .logging_setup import configure_logging, get_logger
 from .login import PelotonLogin
 from .numbering import EpisodeNumberer
 from .scraper import PelotonScraper, ScrapeConfig
 from .session import BrowserSession, SessionConfig
+from .validate_session import SessionValidator
 
 _LOG = get_logger(__name__)
 
@@ -44,6 +47,9 @@ class ValidationDeps:
     scraper: PelotonScraper
     username: str
     password: str
+    # Optional /api/me check of the minted session (read-only GET; reports whether
+    # the session the worker would deliver actually works). ``None`` skips it.
+    session_validator: SessionValidator | None = None
 
 
 def run_validation(
@@ -97,6 +103,13 @@ def run_validation(
                 }
             except BearerCaptureError as exc:
                 bearer_info = {"captured": False, "error": str(exc)}
+            else:
+                if deps.session_validator is not None:
+                    try:
+                        deps.session_validator.validate(minted)
+                        bearer_info["validated"] = True
+                    except SessionRejectedError as exc:
+                        bearer_info.update({"validated": False, "validationError": str(exc)})
         report["bearer"] = bearer_info
 
         yaml_text = render_subscriptions_yaml(entries, media_root)
@@ -143,7 +156,10 @@ def _print_human(report: dict) -> None:
     print(f"  login:   {login.get('outcome', '?')} ({login.get('detail', '')})")
     bearer = report.get("bearer", {})
     print(f"  bearer:  captured={bearer.get('captured')} "
+          f"validated={bearer.get('validated', 'n/a')} "
           f"expiresAt={bearer.get('expiresAt', 'n/a')}")
+    if bearer.get("validationError"):
+        print(f"    ! {bearer['validationError']}")
     print(f"  entries: {report.get('entries', 0)}")
     summary = report.get("summary", {})
     if summary.get("byActivity"):
@@ -202,6 +218,7 @@ def main(argv=None) -> int:
         ),
         login=PelotonLogin(),
         minter=BearerMinter(),
+        session_validator=SessionValidator(),
         scraper=PelotonScraper(ScrapeConfig(
             max_classes=args.max_classes, dynamic_scrolling=True,
             max_scrolls=args.max_scrolls)),

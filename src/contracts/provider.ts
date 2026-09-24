@@ -5,6 +5,7 @@ import type { HealthResult } from './health';
 import type { SchedulingDeclaration } from './scheduling';
 import type { SubscriptionEntry } from './subscription-entry';
 import type { AssetDescriptor } from './assets';
+import { isDownloaderAssetKind, type DownloaderAssetKind } from './downloader-assets';
 import type { ProviderContext, SessionArtifacts } from './context';
 
 export const remediationActionSchema = z.enum(['redownload', 'replace']);
@@ -40,6 +41,14 @@ export interface SourceProvider {
    * own "Only Recent" bounds them at download time, so their whole source list always emits.
    */
   readonly emitWindow?: boolean;
+  /**
+   * Downloader assets this provider CONTRIBUTES to every Library it feeds (issue #40 —
+   * `downloader-assets.ts`). On every projection of a Library with at least one enabled Source of
+   * this provider, the core mirrors each declared kind's tree beside `subscriptions.yaml` (Peloton:
+   * its yt-dlp extractor-override plugin). Omitted/empty = the downloader needs nothing extra.
+   * A static declaration like `emitWindow`, not a capability-gated hook.
+   */
+  readonly downloaderAssets?: readonly DownloaderAssetKind[];
   readonly settingsSchema: z.ZodType;
   /** C4 — the discovery cadence declaration. */
   readonly scheduling: SchedulingDeclaration;
@@ -94,6 +103,10 @@ export function validateProvider(provider: SourceProvider): void {
   if (provider.mediaKinds.length === 0) fail('must declare at least one mediaKind');
   if (typeof provider.test !== 'function') fail('must implement test() (C1)');
   if (typeof provider.discover !== 'function') fail('must implement discover() (C3)');
+
+  for (const kind of provider.downloaderAssets ?? []) {
+    if (!isDownloaderAssetKind(kind)) fail(`declares unknown downloader asset kind "${kind}"`);
+  }
 
   const declared = new Set<Capability>(provider.capabilities);
 

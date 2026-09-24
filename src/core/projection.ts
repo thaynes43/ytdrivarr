@@ -32,7 +32,9 @@ export async function projectLibrary(
   return { dir, configPath, subscriptionsPath };
 }
 
-async function atomicWrite(path: string, content: string): Promise<void> {
+/** Write-temp-then-rename (D-14): a reader on the shared volume sees the old file or the new one,
+ * never a partial write. The temp sibling is removed if the write or rename fails. */
+export async function atomicWrite(path: string, content: string | Uint8Array): Promise<void> {
   const tmp = `${path}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   try {
     await writeFile(tmp, content, 'utf8');

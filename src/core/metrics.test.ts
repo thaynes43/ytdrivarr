@@ -309,6 +309,29 @@ describe('collectMetrics — the exposition surface', () => {
     expect(valueFor(m, 'ytdrivarr_last_run_status', { provider: 'core' })).toBe(0);
   });
 
+  it('counts session_rejected alarms (issue #40) cumulatively per provider', async () => {
+    const { cycling } = await seedPelotonLibrary();
+    for (const telemetry of [{ sessionRejections: 3 }, {}]) {
+      const run = await startRun({
+        scope: 'source',
+        scopeRef: cycling.id,
+        trigger: 'cron',
+        providerId: 'peloton',
+        db: t.db,
+      });
+      await finishRun({
+        id: run.id,
+        status: 'error',
+        counts: {},
+        telemetry,
+        providerId: 'peloton',
+        db: t.db,
+      });
+    }
+    const m = await collectMetrics({ db: t.db });
+    expect(valueFor(m, 'ytdrivarr_session_rejections_total', { provider: 'peloton' })).toBe(3);
+  });
+
   it('surfaces bearer age vs the warn+error SLA gauges + credential status from provider state', async () => {
     await seedPelotonLibrary();
     await createStateStore('peloton', t.db).set('session', {

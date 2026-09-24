@@ -6,5 +6,6 @@ export * from './health';
 export * from './subscription-entry';
 export * from './scheduling';
 export * from './assets';
+export * from './downloader-assets';
 export * from './context';
 export * from './provider';

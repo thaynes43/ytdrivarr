@@ -6,6 +6,7 @@ import { createStateStore } from './state-store';
 import { preservePublishedNumbering } from './dedup';
 import { DEFAULT_EMIT_WINDOW_DAYS } from './emit-window';
 import { projectLibrary, resolveProjectionDir } from './projection';
+import { projectLibraryAssets } from './downloader-assets';
 import { recomposeLibrary, type RecomposeSource } from './recompose';
 import { buildRunSummary, runSummaryToJson } from '../domain/run-summary';
 import { subscriptionEntrySchema, type ProviderContext, type SourceView } from '../contracts';
@@ -32,7 +33,8 @@ import { NotFoundError, ValidationError } from '../errors';
  * Library in scope: dispatch discovery per enabled Source (in_core inline; out_of_process enqueues
  * a job), persist each Source's deduped + IMMUTABLY-numbered entries, then RECOMPOSE the whole
  * Library from ALL its persisted entries and ATOMICALLY project `config.yaml` + `subscriptions.yaml`
- * to its projectionPath. Records a Run (the machine-level history + telemetry, D-08).
+ * (+ the feeding providers' downloader assets under `.ytdrivarr/`) to its projectionPath. Records a
+ * Run (the machine-level history + telemetry, D-08).
  */
 
 export interface RunDiscoveryInput {
@@ -222,6 +224,9 @@ export async function runDiscovery(input: RunDiscoveryInput): Promise<DiscoveryO
       counts.windowedOut += recomposed.windowedOutCount;
       const dir = resolveProjectionDir(library.projectionPath, input.projectionRoot);
       await projectLibrary(dir, recomposed.emitted);
+      // …and the downloader assets of every provider FEEDING the library (its whole source list,
+      // not this run's scope — a YouTube tick re-projects a Peloton library too; issue #40).
+      await projectLibraryAssets(dir, sources);
       counts.emitted += recomposed.emittedEntries.length;
       projected.push({ libraryId: library.id, dir });
     }

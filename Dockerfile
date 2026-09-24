@@ -7,7 +7,9 @@ RUN pnpm install --frozen-lockfile
 COPY tsconfig.json ./
 COPY scripts ./scripts
 COPY src ./src
-# builds the operator-console assets (dist/public) and the server bundle (dist/index.js)
+# builds the operator-console assets (dist/public), the provider downloader assets (dist/assets —
+# e.g. Peloton's yt-dlp plugin, projected beside each fed Library's subscriptions.yaml, issue #40)
+# and the server bundle (dist/index.js)
 RUN pnpm build
 RUN pnpm prune --prod
 
@@ -17,6 +19,8 @@ ENV NODE_ENV=production \
     PORT=8080
 WORKDIR /app
 COPY --from=build /app/node_modules ./node_modules
+# dist/ carries index.js + public/ (console) + assets/ (provider downloader assets; the core
+# resolves /app/dist/assets beside the bundle and refuses to boot if a declared tree is missing).
 COPY --from=build /app/dist ./dist
 # Drizzle SQL migrations run on boot (idempotent); they ship uncompiled next to the app.
 COPY migrations ./migrations
