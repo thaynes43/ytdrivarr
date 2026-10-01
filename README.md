@@ -269,6 +269,17 @@ reference provider, and the operator-console shell. Later milestones bring the o
 authenticated-scraper (Peloton) worker with per-provider console settings + `test()` buttons, member
 edit surfaces, and per-item Fix.
 
+## Automated PR review (Claude)
+
+`.github/workflows/claude-code-review.yml` runs a Claude Code review on every non-draft PR from a
+branch in this repo (dependabot, renovate and fork PRs are skipped). `claude.yml` answers `@claude`
+mentions from users with write access. The review is **advisory**: its job, `Claude advisory
+review`, is not a required check. Agents must read its findings before merging. Each finding is
+fixed, or answered on the PR with a concrete reason it is wrong; never "merging anyway".
+
+Prerequisites: the Claude GitHub App has access to this repo, and the `CLAUDE_CODE_OAUTH_TOKEN`
+repo secret exists. Without the secret both workflows skip and finish green.
+
 ## License
 
 [AGPL-3.0](./LICENSE).
